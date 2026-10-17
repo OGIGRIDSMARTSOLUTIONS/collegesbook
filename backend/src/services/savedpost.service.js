@@ -1,6 +1,7 @@
 const prisma = require('../config/db');
 const { ApiError } = require('../utils/apiResponse');
 const { canViewPost } = require('./permission.service');
+const { withLikeState } = require('./post.service');
 
 async function savePost(studentContext, postId) {
   const post = await prisma.post.findUnique({
@@ -42,7 +43,8 @@ async function listSavedPosts(studentId) {
     },
     orderBy: { createdAt: 'desc' },
   });
-  return saved.filter((s) => !s.post.deletedAt).map((s) => s.post);
+  const posts = saved.filter((s) => s.post && !s.post.deletedAt).map((s) => s.post);
+  return withLikeState(posts, studentId);
 }
 
 module.exports = { savePost, unsavePost, listSavedPosts };

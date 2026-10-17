@@ -24,6 +24,7 @@ const reactionSchema = z.object({
 const feedQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(50).default(20),
+  hashtag: z.string().regex(/^[\p{L}\p{N}_]{2,40}$/u).optional(),
 });
 
 module.exports = { createPostSchema, createCommentSchema, reactionSchema, feedQuerySchema };

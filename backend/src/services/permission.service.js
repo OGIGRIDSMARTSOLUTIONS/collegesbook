@@ -33,7 +33,14 @@ async function canMessage(sender, receiver) {
   const connectionStatus = await getConnectionStatus(sender.id, receiver.id);
   if (connectionStatus === 'BLOCKED') return false;
 
-  // Same institution: students may message across departments and academic sets.
+  const privacy = await prisma.studentPrivacy.findUnique({
+    where: { studentId: receiver.id },
+    select: { whoCanMessage: true },
+  });
+  const rule = privacy?.whoCanMessage ?? 'INSTITUTION_ONLY';
+  if (rule === 'NOBODY_EXCEPT_CONNECTIONS') return connectionStatus === 'ACCEPTED';
+  if (rule === 'SET_ONLY') return Boolean(sender.setId && sender.setId === receiver.setId);
+  // Legacy permissive settings are interpreted as institution-only.
   return true;
 }
 

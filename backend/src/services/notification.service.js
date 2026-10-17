@@ -1,6 +1,7 @@
 const prisma = require('../config/db');
 const { ApiError } = require('../utils/apiResponse');
 const cache = require('./cache.service');
+const { notifyChanged } = require('./notificationPublisher.service');
 
 async function listNotifications(studentId, { page, pageSize }) {
   const [items, total] = await prisma.$transaction([
@@ -36,7 +37,7 @@ async function markAsRead(studentId, notificationId) {
     where: { id: notificationId },
     data: { readAt: new Date() },
   });
-  await cache.del(`notifications:unread:${studentId}`);
+  await notifyChanged([studentId]);
   return updated;
 }
 
@@ -45,7 +46,7 @@ async function markAllAsRead(studentId) {
     where: { recipientId: studentId, readAt: null },
     data: { readAt: new Date() },
   });
-  await cache.del(`notifications:unread:${studentId}`);
+  await notifyChanged([studentId]);
   return { markedRead: result.count };
 }
 

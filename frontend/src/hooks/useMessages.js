@@ -81,12 +81,15 @@ export function useConversationSocket(conversationId, currentStudentId) {
     if (!conversationId) return undefined;
     const socket = getSocket();
 
-    socket.emit('conversation:join', conversationId, (res) => {
+    function joinRoom() { socket.emit('conversation:join', conversationId, (res) => {
       if (!res?.ok) {
         // eslint-disable-next-line no-console
         console.warn('Could not join conversation room:', res?.error);
       }
-    });
+    }); }
+    joinRoom();
+    socket.on('connect', joinRoom);
+    setTypingStudentId(null);
 
     function handleMessage(message) {
       if (message.conversationId !== conversationId) return;
@@ -110,20 +113,31 @@ export function useConversationSocket(conversationId, currentStudentId) {
       }
 
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      if (message.senderId !== currentStudentId) messageService.markRead(conversationId).catch(() => {});
     }
 
-    function handleTypingStart({ studentId }) {
-      if (studentId !== currentStudentId) setTypingStudentId(studentId);
+    function handleTypingStart({ studentId, conversationId: eventConversationId }) {
+      if (eventConversationId === conversationId && studentId !== currentStudentId) setTypingStudentId(studentId);
     }
-    function handleTypingStop({ studentId }) {
+    function handleTypingStop({ studentId, conversationId: eventConversationId }) {
+      if (eventConversationId !== conversationId) return;
       setTypingStudentId((current) => (current === studentId ? null : current));
     }
 
+    function handleRead(event) {
+      if (event.conversationId === conversationId) {
+        queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
+      }
+    }
+    socket.on('message:read', handleRead);
     socket.on('message:received', handleMessage);
     socket.on('typing:start', handleTypingStart);
     socket.on('typing:stop', handleTypingStop);
 
     return () => {
+      socket.emit('conversation:leave', conversationId);
+      socket.off('connect', joinRoom);
+      socket.off('message:read', handleRead);
       socket.off('message:received', handleMessage);
       socket.off('typing:start', handleTypingStart);
       socket.off('typing:stop', handleTypingStop);

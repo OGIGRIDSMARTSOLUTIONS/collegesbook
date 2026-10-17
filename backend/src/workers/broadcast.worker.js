@@ -1,6 +1,7 @@
 const { Worker } = require('bullmq');
 const prisma = require('../config/db');
 const { createClient } = require('../config/redis');
+const cache = require('../services/cache.service');
 
 /**
  * startBroadcastWorker — run via `npm run worker` as a SEPARATE process
@@ -30,6 +31,14 @@ function startBroadcastWorker() {
         }),
       ]);
 
+      // Invalidate unread counts before signaling the API process.
+      await Promise.all(recipientStudentIds.map((id) => cache.del(`notifications:unread:${id}`)));
+      const publisher = createClient({ label: 'broadcast-notification-publisher' });
+      try {
+        await publisher.publish('collegebook:notification-changed', JSON.stringify(recipientStudentIds));
+      } finally {
+        await publisher.quit();
+      }
       return { processed: recipientStudentIds.length };
     },
     { connection: createClient() }

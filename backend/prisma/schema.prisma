@@ -191,6 +191,8 @@ model User {
   emailVerifiedAt  DateTime?
   lastLoginAt      DateTime?
   refreshTokenHash String?
+  passwordResetTokenHash String? @unique
+  passwordResetExpiresAt DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
@@ -368,6 +370,7 @@ model Student {
   @@index([setId])
   @@index([departmentId])
   @@map("students")
+  reposts PostRepost[]
 }
 
 model StudentPrivacy {
@@ -406,11 +409,31 @@ model Post {
   reactions Reaction[]
   reports   Report[]
   savedBy   SavedPost[]
+  reposts   PostRepost[]
+  repostOfId String?
+  repostOf   Post? @relation("PostRepostOrigin", fields: [repostOfId], references: [id], onDelete: SetNull)
+  repostedCopies Post[] @relation("PostRepostOrigin")
 
   @@index([authorId])
   @@index([institutionId, createdAt])
   @@index([groupId])
   @@map("posts")
+}
+
+model PostRepost {
+  id        String   @id @default(cuid())
+  postId    String
+  studentId String
+  quote     String?  @db.VarChar(1000)
+  repostPostId String? @unique
+  createdAt DateTime @default(now())
+
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, studentId])
+  @@index([studentId, createdAt])
+  @@map("post_reposts")
 }
 
 model Comment {
@@ -728,6 +751,7 @@ model Group {
 
   creator     Student           @relation("GroupCreator", fields: [creatorId], references: [id], onDelete: Cascade)
   memberships GroupMembership[]
+  invitations GroupInvitation[]
   posts       Post[]
 
   @@index([institutionId])
@@ -747,6 +771,22 @@ model GroupMembership {
   @@unique([groupId, studentId])
   @@index([studentId])
   @@map("group_memberships")
+}
+
+model GroupInvitation {
+  id String @id @default(cuid())
+  groupId String
+  inviterId String
+  inviteeId String
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  respondedAt DateTime?
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  @@unique([groupId, inviteeId])
+  @@index([inviteeId, status])
+  @@map("group_invitations")
 }
 
 model SavedPost {

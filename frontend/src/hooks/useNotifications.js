@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { notificationService } from '../services/notification.service';
 
-export function useNotifications() {
-  return useQuery({ queryKey: ['notifications'], queryFn: () => notificationService.list(), staleTime: 15_000 });
+export function useNotifications(page = 1) {
+  return useQuery({ queryKey: ['notifications', 'page', page], queryFn: () => notificationService.list({ page, pageSize: 20 }), staleTime: 15_000 });
 }
 
 // Polled rather than socket-pushed: the backend doesn't currently emit a
@@ -15,7 +15,7 @@ export function useUnreadCount() {
     queryKey: ['notifications', 'unread-count'],
     queryFn: notificationService.unreadCount,
     staleTime: 15_000,
-    refetchInterval: 30_000,
+    refetchInterval: 30_000, // recovery fallback if websocket is unavailable
     refetchIntervalInBackground: false,
   });
 }

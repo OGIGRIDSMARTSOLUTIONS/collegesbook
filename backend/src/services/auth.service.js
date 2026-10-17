@@ -1,4 +1,6 @@
 const prisma = require('../config/db');
+const crypto = require('node:crypto');
+const { resend, isEmailConfigured, fromAddress } = require('../config/resend');
 const { enrollStudentsInClassYearBooks } = require('./yearbookEnrollment.service');
 const { OAuth2Client } = require('google-auth-library');
 const { hashPassword, comparePassword } = require('../utils/password');
@@ -84,8 +86,15 @@ async function registrationDepartments({ matriculationNumber }) {
 }
 
 async function register({ email, password, matriculationNumber, departmentId, department, phoneNumber }) {
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) throw new ApiError('An account with this email already exists', 409);
+  const normalizedEmail = String(email ?? '').trim().toLowerCase();
+  // PostgreSQL text uniqueness is case-sensitive by default; check regardless of case.
+  const existing = await prisma.user.findFirst({
+    where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+    select: { id: true },
+  });
+  if (existing) {
+    throw new ApiError('This email is already registered. Please log in or reset your password.', 409);
+  }
 
   const matriculationInput = String(matriculationNumber ?? '').trim();
   const matric = normalizeMatriculation(matriculationInput);
@@ -145,10 +154,21 @@ async function register({ email, password, matriculationNumber, departmentId, de
   const passwordHash = await hashPassword(password);
   const { firstName, lastName } = splitName([match.firstName, match.lastName, match.otherNames].filter(Boolean).join(' '));
 
-  const user = await prisma.$transaction(async (tx) => {
+  let user;
+  try {
+    user = await prisma.$transaction(async (tx) => {
+    // Serialize registration by email across concurrent requests.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${normalizedEmail}))`;
+    const alreadyRegistered = await tx.user.findFirst({
+      where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (alreadyRegistered) {
+      throw new ApiError('This email is already registered. Please log in or reset your password.', 409);
+    }
     const createdUser = await tx.user.create({
       data: {
-        email,
+        email: normalizedEmail,
         passwordHash,
         role: 'STUDENT',
         accountStatus: 'ACTIVE',
@@ -168,7 +188,13 @@ async function register({ email, password, matriculationNumber, departmentId, de
     await enrollStudentsInClassYearBooks(tx, { institutionId: match.institutionId, setId: match.setId, studentIds: [match.id] });
 
     return createdUser;
-  });
+    });
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      throw new ApiError('This email or student account is already registered. Please log in or contact your institution.', 409);
+    }
+    throw error;
+  }
 
   return { ...user, firstName, lastName, institutionId: match.institutionId, studentId: match.id };
 }
@@ -277,4 +303,43 @@ async function refresh(refreshToken) {
   return { accessToken, user };
 }
 
-module.exports = { register, registrationDepartments, login, loginWithGoogle, refresh };
+/** Password reset tokens are random, one-use and stored only as SHA-256 digests. */
+async function requestPasswordReset({ email }) {
+  const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
+  // Never disclose whether an account exists.
+  if (!user || !isEmailConfigured()) return;
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const passwordResetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await prisma.user.update({ where: { id: user.id }, data: { passwordResetTokenHash, passwordResetExpiresAt } });
+  const baseUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '');
+  const url = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+  try {
+    const result = await resend.emails.send({
+      from: fromAddress(), to: user.email, subject: 'Reset your CollegeBook password',
+      text: `A password reset was requested for your CollegeBook account.\n\nOpen this link within 15 minutes:\n${url}\n\nIf you did not request this, ignore this email.`,
+    });
+    if (result.error) throw result.error;
+  } catch (error) {
+    await prisma.user.update({ where: { id: user.id }, data: { passwordResetTokenHash: null, passwordResetExpiresAt: null } });
+    console.error('Password reset email delivery failed:', error.message);
+  }
+}
+
+async function resetPassword({ token, password }) {
+  const passwordResetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const user = await prisma.user.findUnique({ where: { passwordResetTokenHash } });
+  if (!user || !user.passwordResetExpiresAt || user.passwordResetExpiresAt <= new Date()) {
+    throw new ApiError('Reset link is invalid or has expired', 400);
+  }
+  const passwordHash = await hashPassword(password);
+  // Atomic update prevents the same reset token from being redeemed twice.
+  const result = await prisma.user.updateMany({
+    where: { id: user.id, passwordResetTokenHash, passwordResetExpiresAt: { gt: new Date() } },
+    data: { passwordHash, passwordResetTokenHash: null, passwordResetExpiresAt: null, refreshTokenHash: null },
+  });
+  if (result.count !== 1) throw new ApiError('Reset link is invalid or has expired', 400);
+}
+
+module.exports = { register, registrationDepartments, login, loginWithGoogle, refresh, requestPasswordReset, resetPassword };

@@ -72,6 +72,7 @@ async function getPostHandler(req, res, next) {
 async function deletePostHandler(req, res, next) {
   try {
     const result = await postService.deletePost(req.context, req.params.id);
+    getIO()?.emit('feed:changed', { postId: req.params.id });
     return ok(res, result);
   } catch (err) {
     next(err);
@@ -99,6 +100,7 @@ async function listStudentPostsHandler(req, res, next) {
 async function createCommentHandler(req, res, next) {
   try {
     const comment = await postService.createComment(req.context, req.params.id, req.body);
+    getIO()?.emit('feed:changed', { postId: req.params.id });
     return created(res, comment);
   } catch (err) {
     next(err);
@@ -121,6 +123,7 @@ async function reactToPostHandler(req, res, next) {
       { postId: req.params.id },
       req.body.type
     );
+    getIO()?.emit('feed:changed', { postId: req.params.id });
     return ok(res, result);
   } catch (err) {
     next(err);
@@ -134,13 +137,34 @@ async function reactToCommentHandler(req, res, next) {
       { commentId: req.params.id },
       req.body.type
     );
+    getIO()?.emit('comments:changed', { postId: result.postId || req.body.postId });
     return ok(res, result);
   } catch (err) {
     next(err);
   }
 }
 
+async function listReactionStudentsHandler(req, res, next) {
+  try {
+    const students = await postService.listReactionStudents(req.context, {
+      ...(req.params.commentId ? { commentId: req.params.commentId } : { postId: req.params.id }),
+    });
+    return ok(res, students);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function toggleRepostHandler(req, res, next) {
+  try {
+    const result = await postService.toggleRepost(req.context, req.params.id, req.body.quote);
+    getIO()?.emit('feed:changed', { postId: req.params.id });
+    return ok(res, result);
+  } catch (err) { next(err); }
+}
+
 module.exports = {
+  toggleRepostHandler,
   createPostHandler,
   getPostHandler,
   deletePostHandler,
@@ -150,4 +174,5 @@ module.exports = {
   listCommentsHandler,
   reactToPostHandler,
   reactToCommentHandler,
+  listReactionStudentsHandler,
 };

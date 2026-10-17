@@ -59,7 +59,7 @@ export default function InstitutionEventsPage() {
   const items = query.data ?? [];
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
+    <div className="w-full min-w-0 max-w-none space-y-5">
       <header>
         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-yearbook">
           Institution Calendar

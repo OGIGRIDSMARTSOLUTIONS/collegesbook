@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useComments, useAddComment } from '../../hooks/useComments';
+import { useComments, useAddComment, useLikeComment } from '../../hooks/useComments';
+import { LikePreview } from './LikePreview';
 import { Button } from '../../components/Button';
 import { LoadingState } from '../../components/loading/Spinner';
 
@@ -11,6 +12,7 @@ function formatTime(iso) {
 export function CommentSection({ postId }) {
   const commentsQuery = useComments(postId, true);
   const addComment = useAddComment(postId);
+  const likeComment = useLikeComment(postId);
   const [body, setBody] = useState('');
 
   function handleSubmit(e) {
@@ -44,6 +46,12 @@ export function CommentSection({ postId }) {
                 <span className="shrink-0 text-[11px] text-text-secondary">{formatTime(comment.createdAt)}</span>
               </div>
               <p className="mt-0.5 whitespace-pre-wrap text-sm text-text">{comment.body}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <button type="button" disabled={likeComment.isPending} onClick={() => likeComment.mutate(comment.id)} className={`text-xs hover:text-brand ${comment.likedByMe ? 'font-semibold text-brand' : 'text-text-secondary'}`} aria-pressed={!!comment.likedByMe}>
+                  {comment.likedByMe ? '♥ Liked' : '♡ Like'}
+                </button>
+                <LikePreview targetId={comment.id} count={comment.likeCount || 0} />
+              </div>
             </div>
           </div>
         ))}

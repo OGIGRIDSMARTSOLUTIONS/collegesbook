@@ -1,7 +1,7 @@
 const { z } = require('zod');
 
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8, 'Password must be at least 8 characters'),
   matriculationNumber: z.string().min(1, 'Matriculation number is required').max(80),
   // departmentId comes from the registration dropdown (which only lists
@@ -28,4 +28,9 @@ const registrationDepartmentsSchema = z.object({
   matriculationNumber: z.string().trim().min(1, 'Matriculation number is required').max(80),
 });
 
-module.exports = { registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema };
+const forgotPasswordSchema = z.object({ email: z.string().email() });
+const resetPasswordSchema = z.object({
+  token: z.string().min(32).max(200),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+});
+module.exports = { registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema, forgotPasswordSchema, resetPasswordSchema };

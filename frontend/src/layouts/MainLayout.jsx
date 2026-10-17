@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../hooks/useAuth";
@@ -8,6 +8,7 @@ import { useMyBroadcasts } from "../hooks/useBroadcasts";
 import { usePendingConnections } from "../hooks/useConnections";
 import { useUpcomingBirthdays } from "../hooks/useBirthdays";
 import { useEvents } from "../hooks/useEvents";
+import { useNewsFeeds } from "../hooks/useNewsFeeds";
 import { connectSocket, disconnectSocket } from "../services/socket";
 import { prefetchRoute } from "../services/prefetch.service";
 
@@ -22,6 +23,16 @@ const navigation = [
     label: "YearBook",
     icon: YearBookIcon,
     featured: true,
+  },
+  {
+    to: "/profile",
+    label: "My Profile",
+    icon: UserIcon,
+  },
+  {
+    to: "/saved",
+    label: "Saved",
+    icon: BookmarkIcon,
   },
   {
     to: "/network",
@@ -44,11 +55,6 @@ const navigation = [
     icon: BellIcon,
   },
   {
-    to: "/saved",
-    label: "Saved",
-    icon: BookmarkIcon,
-  },
-  {
     to: "/news-feeds",
     label: "News & Feeds",
     icon: NewsFeedIcon,
@@ -59,12 +65,12 @@ const desktopNavigation = [
   { to: "/home", label: "Home", icon: HomeIcon },
   { to: "/yearbook", label: "YearBook", icon: YearBookIcon, featured: true },
   { to: "/profile", label: "My Profile", icon: UserIcon },
+  { to: "/saved", label: "Saved", icon: BookmarkIcon },
   { to: "/network", label: "My Network", icon: NetworkIcon },
   { to: "/messages", label: "Messages", icon: MessageIcon },
   { to: "/groups", label: "Groups", icon: GroupsIcon },
   { to: "/institution-events", label: "Events", icon: CalendarIcon },
   { to: "/news-feeds", label: "News & Feeds", icon: NewsFeedIcon },
-  { to: "/saved", label: "Saved", icon: BookmarkIcon },
 ];
 
 const ADMIN_ROLES = [
@@ -84,6 +90,11 @@ export function MainLayout() {
   const { data: events } = useEvents({ upcoming: true });
 
   const navigate = useNavigate();
+  const location = useLocation();
+  const isNewsFeedPage = location.pathname.startsWith("/news-feeds");
+  const { data: sidebarNews } = useNewsFeeds({ limit: 8 });
+  const latestNews = sidebarNews?.items?.[0] || null;
+  const [newsPopupOpen, setNewsPopupOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -91,9 +102,21 @@ export function MainLayout() {
   const [updatesOpen, setUpdatesOpen] = useState(false);
 
   useEffect(() => {
-    connectSocket();
-
+    const socket = connectSocket();
+    const refreshNotifications = () => queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    const refreshFeed = () => queryClient.invalidateQueries({ queryKey: ['feed'] });
+    socket.on('notification:changed', refreshNotifications);
+    socket.on('connect', refreshNotifications);
+    socket.on('connect', refreshFeed);
+    socket.on('feed:changed', refreshFeed);
+    const refreshComments = () => queryClient.invalidateQueries({ queryKey: ['comments'] });
+    socket.on('comments:changed', refreshComments);
     return () => {
+      socket.off('notification:changed', refreshNotifications);
+      socket.off('connect', refreshNotifications);
+      socket.off('connect', refreshFeed);
+      socket.off('feed:changed', refreshFeed);
+      socket.off('comments:changed', refreshComments);
       disconnectSocket();
     };
   }, []);
@@ -128,48 +151,46 @@ export function MainLayout() {
           TOP GLOBAL BAR
           ========================================================= */}
       <header className="sticky top-0 z-50 h-17 border-b border-border/90 bg-surface/95 shadow-[0_1px_12px_rgba(20,40,45,0.045)] backdrop-blur">
-        <div className="flex h-full w-full min-w-0 items-center gap-4 px-4 lg:px-6">
-          {/* BRAND */}
+        <div className="flex h-full w-full min-w-0 items-center gap-2 px-2 sm:gap-3 sm:px-4 lg:gap-4 lg:px-6">
+          {/* Institution identity: school name BESIDE logo, CollegeBook BELOW logo. */}
           <NavLink
-            to="/"
-            className="flex shrink-0 items-center gap-2.5"
-            aria-label="CollegeBook home"
+            to="/home"
+            aria-label={`${institutionName} home`}
+            className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 md:flex-none md:max-w-[min(55vw,650px)]"
           >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-brand-soft text-sm font-bold text-brand">
-              {institutionLogo ? (
-                <img src={institutionLogo} alt={`${institutionName} logo`} className="h-full w-full object-contain" />
-              ) : (
-                institutionInitials || "CB"
-              )}
-            </div>
-
-            <div className="hidden sm:block">
-              <div className="text-[18px] font-bold tracking-[-0.035em] text-text">
-                College<span className="text-brand">Book</span>
+            <div className="flex w-14 shrink-0 flex-col items-center justify-center gap-0.5 sm:w-16">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-none bg-transparent text-xs font-bold text-brand shadow-none ring-0 sm:h-14 sm:w-14">
+                {institutionLogo ? (
+                  <img
+                    src={institutionLogo}
+                    alt={`${institutionName} logo`}
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  institutionInitials || "CB"
+                )}
               </div>
+              <span className="text-center text-[9px] font-extrabold leading-none tracking-tight text-brand">
+                CollegeBook
+              </span>
             </div>
+            <span
+              className="min-w-0 max-w-full line-clamp-2 break-words text-[10px] font-bold uppercase leading-tight tracking-normal text-text sm:text-sm sm:font-extrabold sm:tracking-wide lg:text-base"
+              title={institutionName}
+            >
+              {institutionName}
+            </span>
           </NavLink>
 
-          {/* GLOBAL SEARCH */}
-          <div className="relative hidden max-w-105 flex-1 lg:block">
-            <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4.25 w-4.25 -translate-y-1/2 text-text-secondary" />
-
+          {/* Search sits at the RIGHT of the institution name, before notifications. */}
+          <div className="relative ml-auto hidden w-36 shrink-0 md:block lg:w-44 xl:w-48">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
             <input
               type="search"
               placeholder="Search CollegeBook"
               aria-label="Search CollegeBook"
-              className="w-full rounded-full border border-border bg-bg py-2.5 pl-10 pr-4 text-sm text-text outline-none transition placeholder:text-text-secondary focus:border-brand focus:bg-surface focus:ring-2 focus:ring-brand/10"
+              className="w-full rounded-full border border-border bg-bg py-2 pl-9 pr-3 text-xs text-text outline-none transition placeholder:text-text-secondary focus:border-brand focus:bg-surface focus:ring-2 focus:ring-brand/10"
             />
-          </div>
-
-          {/* LOGGED-IN INSTITUTION */}
-          <div className="hidden min-w-0 flex-1 items-center justify-center px-4 xl:flex">
-            <p
-              className="truncate text-center text-lg font-black uppercase tracking-[0.06em] text-text 2xl:text-xl"
-              title={institutionName}
-            >
-              {institutionName.toUpperCase()}
-            </p>
           </div>
 
           {/* NOTIFICATIONS */}
@@ -198,11 +219,11 @@ export function MainLayout() {
             <button
               type="button"
               onClick={() => setMenuOpen((value) => !value)}
-              className="flex items-center gap-2 rounded-full border border-border bg-surface py-1 pl-1 pr-2.5 transition hover:bg-bg"
+              className="flex items-center gap-2 rounded-lg border border-border bg-transparent py-1 pl-1 pr-2.5 transition hover:bg-transparent"
               aria-expanded={menuOpen}
               aria-haspopup="menu"
             >
-              <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-brand-soft text-[11px] font-bold text-brand">
+              <span className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-transparent text-[11px] font-bold text-brand">
                 {profilePhoto ? (
                   <img
                     src={profilePhoto}
@@ -346,7 +367,7 @@ export function MainLayout() {
             />
             <div
               id="collegebook-mobile-navigation"
-              className="absolute inset-x-0 top-full z-50 max-h-[calc(100vh-68px)] overflow-y-auto border-b border-border bg-surface p-3 shadow-[0_18px_35px_rgba(20,40,45,0.14)] lg:hidden"
+              className="absolute left-0 top-full z-50 max-h-[calc(100dvh-68px)] w-[min(62vw,220px)] overflow-y-auto rounded-br-2xl border-b border-r border-border bg-surface p-3 shadow-[0_18px_35px_rgba(20,40,45,0.14)] lg:hidden"
             >
               <div className="mb-3 rounded-xl bg-bg px-3 py-2">
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand">CollegeBook</p>
@@ -404,7 +425,7 @@ export function MainLayout() {
       {/* =========================================================
           DESKTOP LEFT SIDEBAR — NEW COLLEGEBOOK SIDEBAR
           ========================================================= */}
-      <aside className="fixed bottom-0 left-0 top-17 z-30 hidden w-64 border-r border-[#1c4f8d] bg-gradient-to-b from-[#123f79] via-[#0d376d] to-[#082b59] text-white lg:block">
+      <aside className="fixed bottom-0 left-0 top-17 z-30 hidden w-48 border-r border-[#1c4f8d] bg-gradient-to-b from-[#123f79] via-[#0d376d] to-[#082b59] text-white lg:block">
         <div className="flex h-full flex-col px-3 py-4">
           <NavLink to="/profile" className="mb-3 rounded-2xl border border-white/20 bg-white/[0.06] p-3 transition hover:bg-white/[0.10]">
             <div className="flex items-center gap-3">
@@ -447,8 +468,28 @@ export function MainLayout() {
       {/* =========================================================
           DESKTOP RIGHT SIDEBAR
           ========================================================= */}
-      <aside className="fixed bottom-0 right-0 top-17 z-30 hidden w-75 overflow-y-auto border-l border-border bg-surface xl:block">
+      <aside className="fixed bottom-0 right-0 top-17 z-30 hidden w-52 overflow-y-auto border-l border-border bg-surface xl:block">
         <div className="space-y-4 p-4">
+          {!isNewsFeedPage && (
+            <section className="rounded-2xl border border-border bg-surface p-4 shadow-sm" aria-label="News feed preview">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="text-xs font-bold uppercase tracking-[0.12em] text-text">News &amp; Feeds</h2>
+                <span aria-hidden="true">📰</span>
+              </div>
+              {latestNews ? (
+                <>
+                  <button type="button" onClick={() => setNewsPopupOpen(true)} className="block w-full text-left" aria-label={`Read news: ${latestNews.title}`}>
+                    <p className="line-clamp-3 text-sm font-semibold text-text hover:text-brand">{latestNews.title}</p>
+                    <p className="mt-1 line-clamp-2 text-xs text-text-secondary">{latestNews.description || latestNews.source || 'Tap to preview this story.'}</p>
+                    <span className="mt-2 inline-block text-[10px] font-bold text-brand">Read story ↗</span>
+                  </button>
+                  <NavLink to="/news-feeds" className="ml-2 text-[10px] font-bold text-brand">All news →</NavLink>
+                </>
+              ) : (
+                <NavLink to="/news-feeds" className="text-xs text-text-secondary">Explore the latest news →</NavLink>
+              )}
+            </section>
+          )}
           <NavLink to="/institution-news" className="block rounded-2xl border border-border bg-surface p-4 shadow-sm transition hover:border-brand/30 hover:bg-brand-soft/10">
             <div className="mb-3 flex items-center justify-between">
 <h2 className="text-xs font-bold uppercase tracking-[0.12em] text-text">Institutional Updates</h2>
@@ -530,7 +571,7 @@ export function MainLayout() {
             className="fixed inset-0 z-[60] bg-black/25 xl:hidden"
             onClick={() => setUpdatesOpen(false)}
           />
-          <aside className="fixed bottom-0 right-0 top-0 z-[70] w-[min(92vw,340px)] overflow-y-auto border-l border-border bg-surface shadow-[-18px_0_45px_rgba(20,40,45,0.16)] xl:hidden">
+          <aside className="fixed bottom-0 right-0 top-0 z-[70] w-[min(62vw,220px)] overflow-y-auto border-l border-border bg-surface shadow-[-18px_0_45px_rgba(20,40,45,0.16)] xl:hidden">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface/95 px-4 py-4 backdrop-blur">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand">CollegeBook</p>
@@ -547,6 +588,13 @@ export function MainLayout() {
             </div>
             <div className="space-y-4 p-4">
 
+          {!isNewsFeedPage && (
+            <button type="button" onClick={() => { setUpdatesOpen(false); setNewsPopupOpen(true); }} className="w-full rounded-2xl border border-border bg-surface p-4 text-left shadow-sm">
+              <span className="text-xs font-bold uppercase tracking-wider text-text">News &amp; Feeds 📰</span>
+              <p className="mt-2 line-clamp-3 text-sm font-semibold text-text">{latestNews?.title || 'Explore the latest news'}</p>
+              <span className="mt-2 inline-block text-[10px] font-bold text-brand">Read news →</span>
+            </button>
+          )}
           <NavLink onClick={() => setUpdatesOpen(false)} to="/institution-news" className="block rounded-2xl border border-border bg-surface p-4 shadow-sm transition hover:border-brand/30 hover:bg-brand-soft/10">
             <div className="mb-3 flex items-center justify-between">
 <h2 className="text-xs font-bold uppercase tracking-[0.12em] text-text">Institutional Updates</h2>
@@ -616,6 +664,21 @@ export function MainLayout() {
         </>
       )}
 
+      {newsPopupOpen && !isNewsFeedPage && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setNewsPopupOpen(false); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="sidebar-news-title" className="w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <h2 id="sidebar-news-title" className="text-lg font-bold text-text">{latestNews?.title || 'News & Feeds'}</h2>
+              <button type="button" aria-label="Close news preview" onClick={() => setNewsPopupOpen(false)} className="rounded-lg border border-border px-3 py-1 text-text">✕</button>
+            </div>
+            <p className="mt-3 max-h-[45vh] overflow-y-auto whitespace-pre-line text-sm leading-6 text-text-secondary">{latestNews?.description || 'Open News & Feeds to browse current stories.'}</p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              {latestNews?.url && <a href={latestNews.url} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white">Read original story ↗</a>}
+              <NavLink to="/news-feeds" onClick={() => setNewsPopupOpen(false)} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-brand">Open News &amp; Feeds</NavLink>
+            </div>
+          </section>
+        </div>
+      )}
       {/* =========================================================
           MOBILE BOTTOM NAVIGATION
           ========================================================= */}
@@ -668,8 +731,8 @@ export function MainLayout() {
       {/* =========================================================
           PAGE CONTENT
           ========================================================= */}
-      <main className="min-h-[calc(100vh-68px)] min-w-0 lg:pl-64 xl:pr-75">
-        <div className="w-full min-w-0 px-3 py-6 pb-24 sm:px-4 md:px-5 lg:px-6 lg:pb-8">
+      <main className="min-h-[calc(100vh-68px)] min-w-0 lg:pl-48 xl:pr-52">
+        <div className="w-full min-w-0 px-2 py-4 pb-24 sm:px-3 md:px-4 lg:px-3 lg:py-5 lg:pb-8 2xl:px-4">
           <Outlet />
         </div>
       </main>

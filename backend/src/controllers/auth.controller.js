@@ -64,4 +64,19 @@ async function meHandler(req, res) {
   return ok(res, req.context);
 }
 
-module.exports = { registerHandler, registrationDepartmentsHandler, loginHandler, googleLoginHandler, refreshHandler, logoutHandler, meHandler };
+async function forgotPasswordHandler(req, res, next) {
+  try {
+    await authService.requestPasswordReset(req.body);
+    return ok(res, { message: 'If the email is registered, a reset link will be sent.' });
+  } catch (err) { next(err); }
+}
+
+async function resetPasswordHandler(req, res, next) {
+  try {
+    await authService.resetPassword(req.body);
+    clearAuthCookies(res);
+    return ok(res, { message: 'Password updated. Please sign in.' });
+  } catch (err) { next(err); }
+}
+
+module.exports = { forgotPasswordHandler, resetPasswordHandler, registerHandler, registrationDepartmentsHandler, loginHandler, googleLoginHandler, refreshHandler, logoutHandler, meHandler };

@@ -90,7 +90,7 @@ export default function NewsFeedsPage() {
   }, [items, currentStory]);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full min-w-0 max-w-none px-0 py-2 sm:px-1 lg:px-0">
       <section className="overflow-hidden rounded-3xl border border-border bg-surface shadow-sm">
         <div className="border-b border-border bg-gradient-to-br from-brand-soft/60 via-surface to-surface px-5 py-6 sm:px-7">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">

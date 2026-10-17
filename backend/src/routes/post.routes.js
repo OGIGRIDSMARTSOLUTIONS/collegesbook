@@ -8,6 +8,7 @@ const {
   feedQuerySchema,
 } = require('../validators/post.validators');
 const {
+  toggleRepostHandler,
   createPostHandler,
   getPostHandler,
   deletePostHandler,
@@ -17,6 +18,7 @@ const {
   listCommentsHandler,
   reactToPostHandler,
   reactToCommentHandler,
+  listReactionStudentsHandler,
 } = require('../controllers/post.controller');
 
 const router = express.Router();
@@ -32,7 +34,11 @@ router.get('/student/:id', authenticate, validateQuery(feedQuerySchema), listStu
 router.post('/:id/comments', authenticate, validate(createCommentSchema), createCommentHandler);
 router.get('/:id/comments', authenticate, listCommentsHandler);
 
+router.post('/:id/repost', authenticate, validate(require('zod').z.object({ quote: require('zod').z.string().max(1000).optional() })), toggleRepostHandler);
+
 router.post('/:id/reactions', authenticate, validate(reactionSchema), reactToPostHandler);
 router.post('/comments/:id/reactions', authenticate, validate(reactionSchema), reactToCommentHandler);
+router.get('/comments/:commentId/likes', authenticate, listReactionStudentsHandler);
+router.get('/:id/likes', authenticate, listReactionStudentsHandler);
 
 module.exports = router;

@@ -18,15 +18,6 @@ function BookIcon({ className = 'h-5 w-5' }) {
   );
 }
 
-function SearchIcon({ className = 'h-4 w-4' }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <circle cx="11" cy="11" r="6.5" />
-      <path d="m20 20-3.5-3.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function ArrowIcon() {
   return (
     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -120,7 +111,7 @@ function YearbookDetail({ yearbookId, onBack }) {
 
   if (yearbookQuery.isError || !yearbookQuery.data) {
     return (
-      <div className="mx-auto max-w-5xl py-16 text-center">
+      <div className="w-full min-w-0 max-w-none py-16 text-center">
         <p className="text-sm text-danger">Couldn’t load this YearBook.</p>
         <button onClick={onBack} className="mt-3 text-sm font-semibold text-brand">Return to archive</button>
       </div>
@@ -210,12 +201,12 @@ function YearbookDetail({ yearbookId, onBack }) {
             <p className="mt-1 text-sm text-text-secondary">Browse the official record of this class.</p>
           </div>
           <div className="relative w-full sm:w-72">
-            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
+
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search graduates"
-              className="w-full rounded-xl border border-border bg-surface py-2.5 pl-9 pr-3 text-sm text-text placeholder:text-text-secondary focus:border-yearbook"
+              className="w-full rounded-xl border border-border bg-surface py-2.5 px-3 text-sm text-text placeholder:text-text-secondary focus:border-yearbook"
             />
           </div>
         </div>

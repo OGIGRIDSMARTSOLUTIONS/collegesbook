@@ -9,7 +9,7 @@ import {
   useUpdateProfile,
 } from "../../hooks/useProfile";
 import { usePrivacySettings, useUpdatePrivacy } from "../../hooks/usePrivacy";
-import { useConnectionActions } from "../../hooks/useConnections";
+import { useBlockedConnections, useConnectionActions } from "../../hooks/useConnections";
 import { LoadingState } from '../../components/loading/Spinner';
 
 function initials(firstName, lastName) {
@@ -162,12 +162,18 @@ function EditProfileForm({ student, onDone }) {
         value={form.location}
         onChange={handleChange}
       />
-      <TextField
-        label="Gender"
-        name="gender"
-        value={form.gender}
-        onChange={handleChange}
-      />
+      <label className="block text-sm font-medium text-text">
+        Sex
+        <select name="gender" value={form.gender} onChange={handleChange}
+          className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-text focus:outline-none focus:ring-2 focus:ring-brand">
+          <option value="">Select sex</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+          {form.gender && !['Male', 'Female'].includes(form.gender) && (
+            <option value={form.gender}>{form.gender}</option>
+          )}
+        </select>
+      </label>
       <TextField
         label="Phone number"
         name="phoneNumber"
@@ -238,8 +244,6 @@ const MESSAGE_OPTIONS = [
   "NOBODY_EXCEPT_CONNECTIONS",
   "SET_ONLY",
   "INSTITUTION_ONLY",
-  "APPROVED_INSTITUTIONS",
-  "EVERYONE",
 ];
 const VISIBILITY_OPTIONS = [
   "CONNECTIONS_ONLY",
@@ -280,7 +284,7 @@ function PrivacySettings() {
               {PRIVACY_LABELS[field]}
             </span>
             <select
-              value={privacyQuery.data[field]}
+              value={field === "whoCanMessage" && !MESSAGE_OPTIONS.includes(privacyQuery.data[field]) ? "INSTITUTION_ONLY" : privacyQuery.data[field]}
               onChange={(e) => handleChange(field, e.target.value)}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-text"
             >
@@ -340,17 +344,59 @@ function OwnProfile() {
 
 function OtherStudentProfile({ id }) {
   const studentQuery = useStudentProfile(id);
-  const { block } = useConnectionActions();
+  const blockedQuery = useBlockedConnections();
+  const { block, unblock } = useConnectionActions();
+  const [actionError, setActionError] = useState("");
 
-  if (studentQuery.isLoading)
+  // Read the actual saved block state, not the last mutation's isSuccess flag.
+  // This stays correct after navigation, refreshing, and unblocking elsewhere.
+  const blockedStudent = blockedQuery.data?.find((student) => student.id === id);
+  const isBlockedByMe = Boolean(blockedStudent);
+  const busy = block.isPending || unblock.isPending;
+
+  const toggleBlock = () => {
+    setActionError("");
+    if (isBlockedByMe) {
+      unblock.mutate(id, {
+        onError: (error) => setActionError(error.message || "Unable to unblock student."),
+      });
+      return;
+    }
+
+    const name = studentQuery.data?.firstName || "this student";
+    if (!window.confirm(`Block ${name}? They won't be able to message you, view your profile, or see your posts.`)) {
+      return;
+    }
+    block.mutate(id, {
+      onError: (error) => setActionError(error.message || "Unable to block student."),
+    });
+  };
+
+  if (studentQuery.isLoading || blockedQuery.isLoading) {
     return <LoadingState message="Loading profile…" />;
+  }
 
-  if (studentQuery.isError) {
+  // Some profiles cannot be read while blocked. The person who created the
+  // block must still be able to undo it from this page.
+  if (studentQuery.isError || !studentQuery.data) {
+    if (isBlockedByMe) {
+      return (
+        <div className="rounded-lg border border-border bg-surface p-6">
+          <h1 className="text-lg font-semibold text-text">
+            {[blockedStudent.firstName, blockedStudent.lastName].filter(Boolean).join(" ")}
+          </h1>
+          <p className="my-3 text-sm text-text-secondary">You blocked this student.</p>
+          {actionError && <p role="alert" className="mb-3 text-sm text-danger">{actionError}</p>}
+          <Button variant="secondary" disabled={busy} onClick={toggleBlock}>
+            {unblock.isPending ? "Unblocking…" : "Unblock"}
+          </Button>
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg border border-border bg-surface p-6 text-center">
         <p className="text-sm text-text-secondary">
-          {studentQuery.error.status === 403 ||
-          studentQuery.error.status === 404
+          {studentQuery.error?.status === 403 || studentQuery.error?.status === 404
             ? "This profile is private or doesn't exist."
             : "Something went wrong loading this profile."}
         </p>
@@ -359,27 +405,25 @@ function OtherStudentProfile({ id }) {
   }
 
   return (
-    <ProfileHeader
-      student={studentQuery.data}
-      actions={
-        <Button
-          variant="ghost"
-          className="text-danger"
-          onClick={() => {
-            if (
-              window.confirm(
-                `Block ${studentQuery.data.firstName}? They won't be able to message you, view your profile, or see your posts.`,
-              )
-            ) {
-              block.mutate(id);
-            }
-          }}
-          disabled={block.isPending}
-        >
-          {block.isSuccess ? "Blocked" : "Block"}
-        </Button>
-      }
-    />
+    <div className="space-y-2">
+      <ProfileHeader
+        student={studentQuery.data}
+        actions={
+          <Button
+            variant={isBlockedByMe ? "secondary" : "ghost"}
+            className={isBlockedByMe ? "" : "text-danger"}
+            onClick={toggleBlock}
+            disabled={busy || blockedQuery.isError}
+          >
+            {busy ? (isBlockedByMe ? "Unblocking…" : "Blocking…") : isBlockedByMe ? "Unblock" : "Block"}
+          </Button>
+        }
+      />
+      {blockedQuery.isError && (
+        <p role="alert" className="text-sm text-danger">Could not check block status. Please retry.</p>
+      )}
+      {actionError && <p role="alert" className="text-sm text-danger">{actionError}</p>}
+    </div>
   );
 }
 

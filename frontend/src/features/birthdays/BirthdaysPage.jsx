@@ -9,7 +9,7 @@ function birthdayLabel(date) {
 export default function BirthdaysPage() {
   const query = useUpcomingBirthdays(30);
   const items = query.data ?? [];
-  return <div className="mx-auto max-w-4xl space-y-5">
+  return <div className="w-full min-w-0 max-w-none space-y-5">
     <div>
 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand">Community</p>
 <h1 className="mt-1 text-2xl font-bold text-text">Birthdays</h1>

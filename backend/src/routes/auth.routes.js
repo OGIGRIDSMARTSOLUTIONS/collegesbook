@@ -2,9 +2,11 @@ const express = require('express');
 const { validate } = require('../middleware/validate.middleware');
 const { authenticate } = require('../middleware/auth.middleware');
 const { authLimiter, registerVerificationLimiter } = require('../middleware/rateLimit.middleware');
-const { registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema } = require('../validators/auth.validators');
+const { registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema, forgotPasswordSchema, resetPasswordSchema } = require('../validators/auth.validators');
 const {
   registerHandler,
+  forgotPasswordHandler,
+  resetPasswordHandler,
   registrationDepartmentsHandler,
   loginHandler,
   googleLoginHandler,
@@ -20,6 +22,8 @@ const router = express.Router();
 // Matric number in, that school's departments out (no school is named).
 router.post('/registration-departments', authLimiter, validate(registrationDepartmentsSchema), registrationDepartmentsHandler);
 router.post('/register', authLimiter, registerVerificationLimiter, validate(registerSchema), registerHandler);
+router.post('/forgot-password', authLimiter, validate(forgotPasswordSchema), forgotPasswordHandler);
+router.post('/reset-password', authLimiter, validate(resetPasswordSchema), resetPasswordHandler);
 router.post('/login', authLimiter, validate(loginSchema), loginHandler);
 router.post('/google', authLimiter, validate(googleLoginSchema), googleLoginHandler);
 router.post('/refresh', authLimiter, refreshHandler);

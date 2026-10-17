@@ -54,6 +54,22 @@ async function blockHandler(req, res, next) {
   }
 }
 
+async function unblockHandler(req, res, next) {
+  try {
+    return ok(res, await connectionService.unblock(req.context.studentId, req.params.studentId));
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function listBlockedHandler(req, res, next) {
+  try {
+    return ok(res, await connectionService.listBlocked(req.context.studentId));
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function listConnectionsHandler(req, res, next) {
   try {
     const connections = await connectionService.listConnections(req.context.studentId);
@@ -78,6 +94,8 @@ module.exports = {
   rejectHandler,
   removeHandler,
   blockHandler,
+  unblockHandler,
+  listBlockedHandler,
   listConnectionsHandler,
   listPendingHandler,
 };

@@ -9,7 +9,7 @@ export default function InstitutionNewsPage() {
   const markRead = useMarkBroadcastRead();
   const items = query.data?.items ?? [];
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
+    <div className="w-full min-w-0 max-w-none space-y-5">
       <div>
         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand">Institution</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight text-text">Institutional Updates</h1>

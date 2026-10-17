@@ -1,4 +1,5 @@
 const prisma = require('../config/db');
+const { notifyChanged } = require('./notificationPublisher.service');
 const { ApiError } = require('../utils/apiResponse');
 const { canBroadcast } = require('./permission.service');
 const auditService = require('./audit.service');
@@ -88,6 +89,7 @@ async function createBroadcast(actorContext, { title, body, scope, scopeIds }, i
         })),
       }),
     ]);
+    await notifyChanged(recipientIds);
     fanoutMode = 'synchronous';
   }
 

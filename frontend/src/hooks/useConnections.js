@@ -9,15 +9,23 @@ export function usePendingConnections() {
   return useQuery({ queryKey: ['connections', 'pending'], queryFn: connectionService.listPending });
 }
 
+export function useBlockedConnections() {
+  return useQuery({ queryKey: ['connections', 'blocked'], queryFn: connectionService.listBlocked });
+}
+
 export function useConnectionActions() {
   const queryClient = useQueryClient();
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['connections'] });
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['connections'] });
+    queryClient.invalidateQueries({ queryKey: ['students'] });
+  };
 
   const send = useMutation({ mutationFn: connectionService.send, onSuccess: invalidate });
   const accept = useMutation({ mutationFn: connectionService.accept, onSuccess: invalidate });
   const reject = useMutation({ mutationFn: connectionService.reject, onSuccess: invalidate });
   const remove = useMutation({ mutationFn: connectionService.remove, onSuccess: invalidate });
   const block = useMutation({ mutationFn: connectionService.block, onSuccess: invalidate });
+  const unblock = useMutation({ mutationFn: connectionService.unblock, onSuccess: invalidate });
 
-  return { send, accept, reject, remove, block };
+  return { send, accept, reject, remove, block, unblock };
 }

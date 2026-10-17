@@ -106,6 +106,12 @@ function MentionComposer({ value, onChange, onSelectMention, disabled }) {
     setMentionState({ start: tokenStart, query: match[2] });
   }
 
+  useEffect(() => () => {
+    clearTimeout(typingTimeoutRef.current);
+    emitTypingStop();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+
   function handleChange(e) {
     onChange(e);
     inspectMention(e.target.value, e.target.selectionStart ?? e.target.value.length);
@@ -116,6 +122,7 @@ function MentionComposer({ value, onChange, onSelectMention, disabled }) {
     const start = mentionState.start;
     const cursor = textarea?.selectionStart ?? value.length;
     const token = mentionHandle(student);
+    if (!token) return;
     const next = `${value.slice(0, start)}${token} ${value.slice(cursor)}`;
     onChange({ target: { value: next } });
     onSelectMention({ studentId: student.id, token });
@@ -130,7 +137,7 @@ function MentionComposer({ value, onChange, onSelectMention, disabled }) {
 
   const suggestions = (suggestionsQuery.data?.items ?? []).filter((student) => {
     const handle = mentionHandle(student);
-    return !query || handle.slice(1).includes(query.toLowerCase());
+    return !!handle && (!query || handle.slice(1).toLowerCase().includes(query.toLowerCase()));
   }).slice(0, 6);
 
   return (
@@ -282,10 +289,13 @@ function ConversationThread({
         searchFrom = startOffset + mention.token.length;
       }
     }
-    sendMessage.mutate({ body: trimmed, mentions });
-    setBody("");
-    setMentionTokens([]);
-    emitTypingStop();
+    sendMessage.mutate({ body: trimmed, mentions }, {
+      onSuccess: () => {
+        setBody("");
+        setMentionTokens([]);
+        emitTypingStop();
+      },
+    });
   }
 
   return (
@@ -325,7 +335,7 @@ function ConversationThread({
           return (
             <div
               key={message.id}
-              className={`flex ${isMine ? "justify-end" : "justify-start"}`}
+              className={`cb-message-enter flex ${isMine ? "justify-end" : "justify-start"}`}
             >
               <div
                 className={`max-w-[85%] wrap-break-word rounded-2xl px-3 py-2 text-sm sm:max-w-[70%] ${
@@ -337,13 +347,18 @@ function ConversationThread({
                   className={`mt-1 text-xs ${isMine ? "text-white/70" : "text-text-secondary"}`}
                 >
                   {formatTime(message.createdAt)}
+                  {isMine && !message.optimistic && (
+                    <span className="ml-2" title="Read status">
+                      {messagesQuery.data?.readers?.some((reader) => reader.lastReadAt && new Date(reader.lastReadAt) >= new Date(message.createdAt)) ? '✓✓ Read' : '✓ Sent'}
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
           );
         })}
         {typingStudentId && (
-          <p className="text-xs italic text-text-secondary">Typing…</p>
+          <p className="cb-typing-indicator text-xs italic text-text-secondary" role="status">Typing<span> •</span><span> •</span><span> •</span></p>
         )}
         <div ref={bottomRef} />
       </div>
@@ -367,6 +382,16 @@ function ConversationThread({
           <span className="sm:hidden">↑</span>
         </Button>
       </form>
+      {sendMessage.isError && (
+        <p role="alert" className="px-3 pb-2 text-xs text-red-600">
+          {sendMessage.error?.message || "Message could not be sent. Please retry."}
+        </p>
+      )}
+      {messagesQuery.isError && (
+        <p role="alert" className="px-3 pb-2 text-xs text-red-600">
+          {messagesQuery.error?.message || "Could not load messages."}
+        </p>
+      )}
     </div>
   );
 }
@@ -377,7 +402,8 @@ export default function MessagesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeId, setActiveId] = useState(null);
   const startConversation = useStartConversation();
-  const startedRef = useRef(false);
+  const startedRef = useRef(null);
+  const [startError, setStartError] = useState("");
 
   // Deep-link support:
   //  - Network's "Message" button -> /messages?with=<studentId>, which
@@ -388,24 +414,37 @@ export default function MessagesPage() {
   //    request needed since we already have the id.
   useEffect(() => {
     const conversationId = searchParams.get("conversation");
-    if (conversationId && !startedRef.current) {
-      startedRef.current = true;
+    if (conversationId) {
       setActiveId(conversationId);
-      searchParams.delete("conversation");
-      setSearchParams(searchParams, { replace: true });
+      setStartError("");
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.delete("conversation");
+        return next;
+      }, { replace: true });
       return;
     }
 
     const withId = searchParams.get("with");
-    if (!withId || startedRef.current) return;
-    startedRef.current = true;
+    if (!withId || startedRef.current === withId) return;
+    startedRef.current = withId;
+    setStartError("");
     startConversation.mutate(withId, {
       onSuccess: (conversation) => {
-        setActiveId(conversation.id);
-        searchParams.delete("with");
-        setSearchParams(searchParams, { replace: true });
+        setActiveId(conversation.id ?? conversation.conversationId);
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.delete("with");
+          return next;
+        }, { replace: true });
+        startedRef.current = null;
+      },
+      onError: (error) => {
+        setStartError(error?.message || "Could not start this conversation. Please try again.");
+        startedRef.current = null;
       },
     });
+    // The mutation is intentionally triggered only when the deep-link changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -414,8 +453,38 @@ export default function MessagesPage() {
       <FloatingAvatars conversations={conversationsQuery.data} side="left" />
       <FloatingAvatars conversations={conversationsQuery.data} side="right" />
 
-      <section className="mx-auto w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_8px_30px_rgba(20,40,45,0.05)] md:h-[calc(100dvh-8rem)]">
-        <div className="grid h-[calc(100dvh-9rem)] min-h-115 grid-cols-1 md:h-full md:grid-cols-[280px_minmax(0,1fr)]">
+      <section className="mx-auto min-w-0 w-full max-w-6xl overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_8px_30px_rgba(20,40,45,0.05)] md:h-[calc(100dvh-8rem)]">
+        {startError && (
+          <div role="alert" className="flex items-center justify-between gap-2 border-b border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <span>{startError}</span>
+            <button
+              type="button"
+              className="shrink-0 underline"
+              disabled={startConversation.isPending}
+              onClick={() => {
+                const target = searchParams.get("with");
+                if (!target) return;
+                setStartError("");
+                startConversation.mutate(target, {
+                  onSuccess: (conversation) => {
+                    setActiveId(conversation.id ?? conversation.conversationId);
+                    setSearchParams((current) => {
+                      const next = new URLSearchParams(current);
+                      next.delete("with");
+                      return next;
+                    }, { replace: true });
+                  },
+                  onError: (error) => {
+                    setStartError(error?.message || "Could not start conversation.");
+                  },
+                });
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        <div className="grid h-[calc(100dvh-9rem)] min-h-115 grid-cols-1 md:h-full md:grid-cols-[minmax(190px,240px)_minmax(0,1fr)]">
           <div
             className={`${activeId ? "hidden md:block" : "block"} min-w-0 overflow-y-auto border-border md:border-r`}
           >

@@ -34,6 +34,19 @@ export function useAddComment(postId) {
       });
       queryClient.invalidateQueries({ queryKey: ['comments', postId] });
       queryClient.invalidateQueries({ queryKey: ['feed'] });
+      queryClient.invalidateQueries({ queryKey: ['saved-posts'] });
+    },
+  });
+}
+
+
+export function useLikeComment(postId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (commentId) => postService.reactToComment(commentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['comments', postId] });
+      queryClient.invalidateQueries({ queryKey: ['comment-likes'] });
     },
   });
 }

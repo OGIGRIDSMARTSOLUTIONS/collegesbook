@@ -1,4 +1,5 @@
 const prisma = require('../config/db');
+const { createNotification, notifyChanged } = require('./notificationPublisher.service');
 const { ApiError } = require('../utils/apiResponse');
 const { canViewPost, isInstitutionStaff, isGroupModerator } = require('./permission.service');
 
@@ -41,6 +42,7 @@ async function notifyMentions(authorContext, studentIds, payload) {
       payload: { ...payload, mentionedBy: authorContext.studentId },
     })),
   });
+  await notifyChanged(validStudents.map((student) => student.id));
 }
 
 async function createPost(authorContext, { body, images, linkUrl, visibility, groupId, mentions }) {
@@ -105,7 +107,7 @@ async function deletePost(actorContext, postId) {
  * paginating. Correct at V1 scale; revisit with a materialized feed/queue
  * once volume grows (Phase 8 in the architecture doc).
  */
-async function getFeed(viewerContext, { page, pageSize }) {
+async function getFeed(viewerContext, { page, pageSize, hashtag }) {
   // Performance V3: build the permission rules into PostgreSQL instead of
   // fetching hundreds of candidates and running asynchronous permission
   // checks one post at a time. This removes the feed's largest N+1 path.
@@ -155,6 +157,8 @@ async function getFeed(viewerContext, { page, pageSize }) {
 
   const where = {
     deletedAt: null,
+    AND: [{ OR: [{ repostOfId: null }, { repostOf: { deletedAt: null, visibility: 'PUBLIC', institutionId: viewerContext.institutionId } }] }],
+    ...(hashtag ? { body: { contains: `#${hashtag}`, mode: 'insensitive' } } : {}),
     ...sameInstitution,
     ...(blockedIds.length ? { authorId: { notIn: blockedIds } } : {}),
     OR: [
@@ -167,7 +171,10 @@ async function getFeed(viewerContext, { page, pageSize }) {
   const [items, total] = await prisma.$transaction([
     prisma.post.findMany({
       where,
-      include: { author: { select: AUTHOR_SELECT } },
+      include: {
+        author: { select: AUTHOR_SELECT },
+        repostOf: { select: { id: true, body: true, images: true, visibility: true, deletedAt: true, institutionId: true, author: { select: AUTHOR_SELECT } } },
+      },
       orderBy: { createdAt: 'desc' },
       skip,
       take: pageSize,
@@ -175,8 +182,21 @@ async function getFeed(viewerContext, { page, pageSize }) {
     prisma.post.count({ where }),
   ]);
 
+  const enriched = await withLikeState(items.map(stripAuthorInternals), viewerContext.studentId);
+  const postIds = items.map((item) => item.id);
+  const [repostCounts, myReposts] = postIds.length ? await Promise.all([
+    prisma.postRepost.groupBy({ by: ['postId'], where: { postId: { in: postIds } }, _count: { _all: true } }),
+    prisma.postRepost.findMany({ where: { postId: { in: postIds }, studentId: viewerContext.studentId }, select: { postId: true } }),
+  ]) : [[], []];
+  const counts = new Map(repostCounts.map((entry) => [entry.postId, entry._count._all]));
+  const mine = new Set(myReposts.map((entry) => entry.postId));
   return {
-    items: await withLikeState(items.map(stripAuthorInternals), viewerContext.studentId),
+    items: enriched.map((post) => ({
+      ...post,
+      repostOf: post.repostOf?.deletedAt || post.repostOf?.visibility !== 'PUBLIC' || post.repostOf?.institutionId !== viewerContext.institutionId ? null : post.repostOf,
+      repostCount: counts.get(post.id) || 0,
+      repostedByMe: mine.has(post.id),
+    })),
     total,
     page,
     pageSize,
@@ -260,6 +280,9 @@ async function createComment(actorContext, postId, { body, parentCommentId, ment
   });
 
   await notifyMentions(actorContext, mentions, { postId: post.id, commentId: comment.id });
+  if (post.authorId !== actorContext.studentId) {
+    await createNotification(post.authorId, 'COMMENT', { postId: post.id, commentId: comment.id, actorId: actorContext.studentId });
+  }
 
   // Return an authoritative count so the feed can update without reopening comments.
   const commentCount = await prisma.comment.count({
@@ -278,7 +301,25 @@ async function listComments(postId, viewerContext) {
     orderBy: { createdAt: 'asc' },
   });
 
-  return comments.map(stripAuthorInternals);
+  const ids = comments.map((comment) => comment.id);
+  const [counts, ownLikes] = ids.length ? await Promise.all([
+    prisma.reaction.groupBy({
+      by: ['commentId'],
+      where: { commentId: { in: ids }, type: 'LIKE' },
+      _count: { _all: true },
+    }),
+    prisma.reaction.findMany({
+      where: { commentId: { in: ids }, studentId: viewerContext.studentId, type: 'LIKE' },
+      select: { commentId: true },
+    }),
+  ]) : [[], []];
+  const countById = new Map(counts.map((row) => [row.commentId, row._count._all]));
+  const likedIds = new Set(ownLikes.map((row) => row.commentId));
+  return comments.map((comment) => ({
+    ...stripAuthorInternals(comment),
+    likeCount: countById.get(comment.id) || 0,
+    likedByMe: likedIds.has(comment.id),
+  }));
 }
 
 // ── Reactions ──
@@ -293,6 +334,7 @@ async function toggleReaction(actorContext, { postId, commentId }, type) {
   if (commentId) {
     const comment = await prisma.comment.findUnique({ where: { id: commentId } });
     if (!comment || comment.deletedAt) throw new ApiError('Comment not found', 404);
+    await getPostOrThrow(comment.postId, actorContext);
   }
 
   const where = postId
@@ -313,7 +355,33 @@ async function toggleReaction(actorContext, { postId, commentId }, type) {
   const created = await prisma.reaction.create({
     data: { studentId, postId, commentId, type },
   });
+  const target = postId
+    ? await prisma.post.findUnique({ where: { id: postId }, select: { authorId: true } })
+    : await prisma.comment.findUnique({ where: { id: commentId }, select: { authorId: true, postId: true } });
+  if (type === 'LIKE' && target && target.authorId !== studentId) {
+    await createNotification(target.authorId, 'LIKE', { postId: postId || target.postId, commentId: commentId || null, actorId: studentId });
+  }
   return { reacted: true, reaction: created };
+}
+
+
+async function listReactionStudents(actorContext, { postId, commentId }) {
+  if (commentId) {
+    const comment = await prisma.comment.findUnique({ where: { id: commentId } });
+    if (!comment || comment.deletedAt) throw new ApiError('Comment not found', 404);
+    await getPostOrThrow(comment.postId, actorContext);
+  } else {
+    await getPostOrThrow(postId, actorContext);
+  }
+  const reactions = await prisma.reaction.findMany({
+    where: { ...(commentId ? { commentId } : { postId }), type: 'LIKE' },
+    select: {
+      student: { select: { id: true, firstName: true, lastName: true, profilePhotoUrl: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+  return reactions.map((reaction) => reaction.student);
 }
 
 async function listGroupPosts(groupId, viewerContext) {
@@ -333,14 +401,46 @@ async function listGroupPosts(groupId, viewerContext) {
   return visible.map(stripAuthorInternals);
 }
 
+async function toggleRepost(actorContext, postId, quote) {
+  const post = await getPostOrThrow(postId, actorContext);
+  if (post.deletedAt || post.groupId || post.repostOfId || post.visibility !== 'PUBLIC') {
+    throw new ApiError('Only public, non-group posts may be reposted', 403);
+  }
+  const where = { postId_studentId: { postId, studentId: actorContext.studentId } };
+  const existing = await prisma.postRepost.findUnique({ where });
+  if (existing) {
+    await prisma.$transaction(async (tx) => {
+      if (existing.repostPostId) await tx.post.update({ where: { id: existing.repostPostId }, data: { deletedAt: new Date() } });
+      await tx.postRepost.delete({ where: { id: existing.id } });
+    });
+    return { reposted: false };
+  }
+  const created = await prisma.$transaction(async (tx) => {
+    const copy = await tx.post.create({
+      data: {
+        authorId: actorContext.studentId,
+        institutionId: actorContext.institutionId,
+        visibility: 'PUBLIC',
+        repostOfId: postId,
+        body: quote?.trim() || null,
+      },
+    });
+    return tx.postRepost.create({ data: { postId, studentId: actorContext.studentId, quote: quote?.trim() || null, repostPostId: copy.id } });
+  });
+  return { reposted: true, repost: created };
+}
+
 module.exports = {
+  toggleRepost,
   createPost,
   getPostOrThrow,
   deletePost,
   getFeed,
   listStudentPosts,
   listGroupPosts,
+  withLikeState,
   createComment,
   listComments,
   toggleReaction,
+  listReactionStudents,
 };

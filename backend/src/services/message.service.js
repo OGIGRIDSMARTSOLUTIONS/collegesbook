@@ -1,4 +1,5 @@
 const prisma = require('../config/db');
+const { notifyChanged } = require('./notificationPublisher.service');
 const { ApiError } = require('../utils/apiResponse');
 const { canMessage } = require('./permission.service');
 const cache = require('./cache.service');
@@ -152,7 +153,10 @@ async function sendMessage(senderContext, conversationId, { body, attachmentUrl,
       payload: { conversationId, messageId: message.id, senderId: senderContext.studentId },
     })),
   ];
-  if (notificationRows.length) await prisma.notification.createMany({ data: notificationRows });
+  if (notificationRows.length) {
+    await prisma.notification.createMany({ data: notificationRows });
+    await notifyChanged(notificationRows.map((row) => row.recipientId));
+  }
 
   // Invalidate only the hot summaries affected by this write.
   await cache.del(
@@ -229,7 +233,11 @@ async function listMessages(conversationId, studentId, { page, pageSize }) {
     prisma.message.count({ where: { conversationId, deletedAt: null } }),
   ]);
 
-  return { items: items.reverse(), total, page, pageSize };
+  const readers = await prisma.conversationParticipant.findMany({
+    where: { conversationId, studentId: { not: studentId } },
+    select: { studentId: true, lastReadAt: true },
+  });
+  return { items: items.reverse(), total, page, pageSize, readers };
 }
 
 async function markRead(conversationId, studentId) {
@@ -239,6 +247,8 @@ async function markRead(conversationId, studentId) {
     data: { lastReadAt: new Date() },
   });
   await cache.del(`conversations:${studentId}`);
+  const { getIO } = require('../websocket/socket');
+  getIO()?.to(`conversation:${conversationId}`).emit('message:read', { conversationId, studentId });
   return { read: true };
 }
 

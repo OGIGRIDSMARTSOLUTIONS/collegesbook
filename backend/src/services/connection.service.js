@@ -1,4 +1,5 @@
 const prisma = require('../config/db');
+const { createNotification } = require('./notificationPublisher.service');
 const { ApiError } = require('../utils/apiResponse');
 
 async function sendRequest(requesterId, addresseeId) {
@@ -26,15 +27,17 @@ async function sendRequest(requesterId, addresseeId) {
     if (existing.status === 'ACCEPTED') throw new ApiError('Already connected', 409);
     if (existing.status === 'PENDING') throw new ApiError('Connection request already pending', 409);
     // REJECTED — allow a fresh request by resetting it.
-    return prisma.connection.update({
+    const result = await prisma.connection.update({
       where: { id: existing.id },
       data: { requesterId, addresseeId, status: 'PENDING' },
     });
+    await createNotification(addresseeId, 'CONNECTION', { actorId: requesterId, action: 'request' });
+    return result;
   }
 
-  return prisma.connection.create({
-    data: { requesterId, addresseeId, status: 'PENDING' },
-  });
+  const result = await prisma.connection.create({ data: { requesterId, addresseeId, status: 'PENDING' } });
+  await createNotification(addresseeId, 'CONNECTION', { actorId: requesterId, action: 'request' });
+  return result;
 }
 
 async function respondToRequest(studentId, requesterId, action) {
@@ -45,10 +48,9 @@ async function respondToRequest(studentId, requesterId, action) {
     throw new ApiError('No pending request from this student', 404);
   }
 
-  return prisma.connection.update({
-    where: { id: connection.id },
-    data: { status: action === 'accept' ? 'ACCEPTED' : 'REJECTED' },
-  });
+  const result = await prisma.connection.update({ where: { id: connection.id }, data: { status: action === 'accept' ? 'ACCEPTED' : 'REJECTED' } });
+  if (action === 'accept') await createNotification(requesterId, 'CONNECTION', { actorId: studentId, action: 'accepted' });
+  return result;
 }
 
 async function cancelOrRemove(studentId, otherStudentId) {
@@ -79,6 +81,9 @@ async function block(blockerId, blockedId) {
   });
 
   if (existing) {
+    if (existing.status === 'BLOCKED' && existing.requesterId !== blockerId) {
+      throw new ApiError('Unable to change a block created by another student', 403);
+    }
     return prisma.connection.update({
       where: { id: existing.id },
       // Normalize so the blocker is always `requesterId` on a BLOCKED row —
@@ -91,6 +96,25 @@ async function block(blockerId, blockedId) {
   return prisma.connection.create({
     data: { requesterId: blockerId, addresseeId: blockedId, status: 'BLOCKED' },
   });
+}
+
+async function unblock(studentId, otherStudentId) {
+  // Only the student who initiated the block may undo it.
+  const connection = await prisma.connection.findFirst({
+    where: {
+      requesterId: studentId,
+      addresseeId: otherStudentId,
+      status: 'BLOCKED',
+    },
+  });
+  if (!connection) throw new ApiError('No block created by you was found', 404);
+  // Restore the normal connection immediately; no new invitation is required.
+  // Only the original blocker can perform this operation.
+  await prisma.connection.update({
+    where: { id: connection.id },
+    data: { status: 'ACCEPTED' },
+  });
+  return { unblocked: true, connected: true };
 }
 
 const CONNECTION_STUDENT_SELECT = {
@@ -119,6 +143,15 @@ async function listConnections(studentId, status = 'ACCEPTED') {
   return connections.map((c) => (c.requesterId === studentId ? c.addressee : c.requester));
 }
 
+async function listBlocked(studentId) {
+  const connections = await prisma.connection.findMany({
+    where: { requesterId: studentId, status: 'BLOCKED' },
+    include: { addressee: { select: CONNECTION_STUDENT_SELECT } },
+    orderBy: { updatedAt: 'desc' },
+  });
+  return connections.map((connection) => connection.addressee);
+}
+
 async function listPendingReceived(studentId) {
   const connections = await prisma.connection.findMany({
     where: { addresseeId: studentId, status: 'PENDING' },
@@ -133,6 +166,8 @@ module.exports = {
   respondToRequest,
   cancelOrRemove,
   block,
+  unblock,
+  listBlocked,
   listConnections,
   listPendingReceived,
 };

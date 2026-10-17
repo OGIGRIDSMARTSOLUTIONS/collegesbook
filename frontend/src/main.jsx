@@ -39,5 +39,9 @@ const tree = (
 );
 
 createRoot(document.getElementById('root')).render(
-  <StrictMode>{googleClientId ? <GoogleOAuthProvider clientId={googleClientId}>{tree}</GoogleOAuthProvider> : tree}</StrictMode>
+  <StrictMode>
+    {googleClientId ? (
+      <GoogleOAuthProvider clientId={googleClientId}>{tree}</GoogleOAuthProvider>
+    ) : tree}
+  </StrictMode>
 );

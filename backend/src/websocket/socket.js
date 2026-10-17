@@ -3,7 +3,6 @@ const { createAdapter } = require('@socket.io/redis-adapter');
 const prisma = require('../config/db');
 const { verifyAccessToken } = require('../utils/jwt');
 const { parseCookieHeader } = require('../utils/cookies');
-const { assertParticipant } = require('../services/message.service');
 const { createClient, isRedisEnabled } = require('../config/redis');
 
 let io = null;
@@ -80,6 +79,21 @@ function initSocket(httpServer) {
     });
     io.adapter(createAdapter(pubClient, subClient));
     presenceRedis = createClient();
+    // Queue workers run in another process. Subscribe to committed
+    // broadcast notification changes so the API can push them to clients.
+    const notificationSubscriber = createClient({ label: 'notification-sub' });
+    notificationSubscriber.subscribe('collegebook:notification-changed').catch((err) => {
+      console.warn('Notification subscription failed:', err.message);
+    });
+    notificationSubscriber.on('message', (channel, raw) => {
+      if (channel !== 'collegebook:notification-changed') return;
+      try {
+        const studentIds = JSON.parse(raw);
+        for (const id of studentIds) io.to(`student:${id}`).emit('notification:changed', { recipientId: id });
+      } catch (err) {
+        console.warn('Notification delivery payload invalid:', err.message);
+      }
+    });
   }
 
   io.use(async (socket, next) => {
@@ -123,6 +137,7 @@ function initSocket(httpServer) {
 
     socket.on('conversation:join', async (conversationId, callback) => {
       try {
+        const { assertParticipant } = require('../services/message.service');
         await assertParticipant(conversationId, studentId);
         socket.join(`conversation:${conversationId}`);
         if (callback) callback({ ok: true });
@@ -131,12 +146,18 @@ function initSocket(httpServer) {
       }
     });
 
-    socket.on('typing:start', ({ conversationId }) => {
+    socket.on('typing:start', ({ conversationId } = {}) => {
+      if (typeof conversationId !== 'string' || !socket.rooms.has(`conversation:${conversationId}`)) return;
       socket.to(`conversation:${conversationId}`).emit('typing:start', { studentId, conversationId });
     });
 
-    socket.on('typing:stop', ({ conversationId }) => {
+    socket.on('typing:stop', ({ conversationId } = {}) => {
+      if (typeof conversationId !== 'string' || !socket.rooms.has(`conversation:${conversationId}`)) return;
       socket.to(`conversation:${conversationId}`).emit('typing:stop', { studentId, conversationId });
+    });
+
+    socket.on('conversation:leave', (conversationId) => {
+      if (typeof conversationId === 'string') socket.leave(`conversation:${conversationId}`);
     });
 
     socket.on('disconnect', async () => {
