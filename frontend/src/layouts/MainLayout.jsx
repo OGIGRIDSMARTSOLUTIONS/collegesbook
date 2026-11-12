@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../hooks/useAuth";
 import { useProfile } from "../hooks/useProfile";
@@ -82,17 +82,26 @@ const ADMIN_ROLES = [
 
 export function MainLayout() {
   const { logout, context } = useAuth();
+  // Show the authenticated application shell and its primary content first.
+  // Sidebar-only requests start shortly afterward instead of competing with
+  // the first feed/dashboard request for a cold Neon connection.
+  const [loadSidebarExtras, setLoadSidebarExtras] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLoadSidebarExtras(true), 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
   const { data: profile } = useProfile();
-  const { data: unread } = useUnreadCount();
-  const { data: broadcasts } = useMyBroadcasts({ page: 1, pageSize: 3 });
-  const { data: pendingConnections } = usePendingConnections();
-  const { data: birthdays } = useUpcomingBirthdays(7);
+  const { data: unread } = useUnreadCount(loadSidebarExtras);
+  const { data: broadcasts } = useMyBroadcasts({ page: 1, pageSize: 3 }, loadSidebarExtras);
+  const { data: pendingConnections } = usePendingConnections(loadSidebarExtras);
+  const { data: birthdays } = useUpcomingBirthdays(7, loadSidebarExtras);
   const { data: events } = useEvents({ upcoming: true });
 
   const navigate = useNavigate();
   const location = useLocation();
   const isNewsFeedPage = location.pathname.startsWith("/news-feeds");
-  const { data: sidebarNews } = useNewsFeeds({ limit: 8 });
+  const { data: sidebarNews } = useNewsFeeds({ limit: 8 }, loadSidebarExtras);
   const latestNews = sidebarNews?.items?.[0] || null;
   const [newsPopupOpen, setNewsPopupOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -100,6 +109,53 @@ export function MainLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
+  const profileMenuRef = useRef(null);
+  const mobileNavigationRef = useRef(null);
+  const mobileNavigationButtonRef = useRef(null);
+
+  // Close floating menus on any outside tap/click, including the top bar.
+  // Capture-phase pointer events also work when other controls stop bubbling.
+  useEffect(() => {
+    if (!menuOpen && !mobileNavOpen) return undefined;
+
+    function handleOutsidePointer(event) {
+      const target = event.target;
+
+      if (menuOpen && !profileMenuRef.current?.contains(target)) {
+        setMenuOpen(false);
+      }
+
+      if (
+        mobileNavOpen &&
+        !mobileNavigationRef.current?.contains(target) &&
+        !mobileNavigationButtonRef.current?.contains(target)
+      ) {
+        setMobileNavOpen(false);
+      }
+    }
+
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        setMobileNavOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointer, true);
+    document.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsidePointer, true);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen, mobileNavOpen]);
+
+  // Route changes must never leave a mobile overlay or account menu open.
+  useEffect(() => {
+    setMenuOpen(false);
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
 
   useEffect(() => {
     const socket = connectSocket();
@@ -215,7 +271,7 @@ export function MainLayout() {
           </NavLink>
 
           {/* PROFILE / ACCOUNT */}
-          <div className="relative">
+          <div className="relative" ref={profileMenuRef}>
             <button
               type="button"
               onClick={() => setMenuOpen((value) => !value)}
@@ -340,6 +396,7 @@ export function MainLayout() {
 
           {/* MOBILE MENU */}
           <button
+            ref={mobileNavigationButtonRef}
             type="button"
             onClick={() => setMobileNavOpen((open) => !open)}
             aria-expanded={mobileNavOpen}
@@ -367,6 +424,7 @@ export function MainLayout() {
             />
             <div
               id="collegebook-mobile-navigation"
+              ref={mobileNavigationRef}
               className="absolute left-0 top-full z-50 max-h-[calc(100dvh-68px)] w-[min(62vw,220px)] overflow-y-auto rounded-br-2xl border-b border-r border-border bg-surface p-3 shadow-[0_18px_35px_rgba(20,40,45,0.14)] lg:hidden"
             >
               <div className="mb-3 rounded-xl bg-bg px-3 py-2">

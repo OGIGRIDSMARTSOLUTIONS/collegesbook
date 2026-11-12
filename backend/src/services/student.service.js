@@ -2,6 +2,11 @@ const prisma = require('../config/db');
 const { enrollStudentsInClassYearBooks } = require('./yearbookEnrollment.service');
 const { ApiError } = require('../utils/apiResponse');
 const emailService = require('./email.service');
+
+function normalizeRegistryEmail(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
 const { canViewProfile } = require('./permission.service');
 
 const PUBLIC_STUDENT_SELECT = {
@@ -152,6 +157,7 @@ async function adminSearchStudents(institutionId, { q, setId, page, pageSize }) 
             { code: { contains: q, mode: 'insensitive' } },
             { studentNumber: { contains: q, mode: 'insensitive' } },
             { phoneNumber: { contains: q, mode: 'insensitive' } },
+            { registryEmail: { contains: q, mode: 'insensitive' } },
           ],
         }
       : {}),
@@ -164,6 +170,7 @@ async function adminSearchStudents(institutionId, { q, setId, page, pageSize }) 
         ...PUBLIC_STUDENT_SELECT,
         studentNumber: true,
         phoneNumber: true,
+        registryEmail: true,
         dateOfBirth: true,
         registryApproved: true,
         user: { select: { email: true, accountStatus: true } },
@@ -218,7 +225,7 @@ function normalizePhone(value) {
   return String(value ?? '').replace(/\D/g, '');
 }
 
-async function adminCreateStudent(institutionId, { name, matriculationNumber, departmentId, phoneNumber, setId }) {
+async function adminCreateStudent(institutionId, { name, matriculationNumber, departmentId, phoneNumber, registryEmail, setId }) {
   const department = await prisma.department.findFirst({
     where: { id: departmentId, institutionId },
     select: { id: true, facultyId: true, name: true },
@@ -236,6 +243,10 @@ async function adminCreateStudent(institutionId, { name, matriculationNumber, de
 
   const studentNumber = normalizeMatriculation(matriculationNumber);
   const normalizedPhone = normalizePhone(phoneNumber);
+  const normalizedEmail = normalizeRegistryEmail(registryEmail);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    throw new ApiError('Enter a valid institutional student email address', 400);
+  }
   if (!/^\d{7,11}$/.test(normalizedPhone)) throw new ApiError('Phone number must contain 7 to 11 digits', 400);
   const existing = await prisma.student.findFirst({
     where: { institutionId, studentNumber },
@@ -258,6 +269,7 @@ async function adminCreateStudent(institutionId, { name, matriculationNumber, de
         firstName,
         lastName,
         phoneNumber: normalizedPhone,
+        registryEmail: normalizedEmail,
         verificationStatus: 'VERIFIED',
         privacy: { create: {} },
       },
@@ -265,6 +277,7 @@ async function adminCreateStudent(institutionId, { name, matriculationNumber, de
         ...PUBLIC_STUDENT_SELECT,
         studentNumber: true,
         phoneNumber: true,
+        registryEmail: true,
         user: { select: { email: true } },
       },
     });
@@ -272,7 +285,7 @@ async function adminCreateStudent(institutionId, { name, matriculationNumber, de
     await enrollStudentsInClassYearBooks(tx, { institutionId, setId: academicSet.id, studentIds: [student.id] });
 
     return student;
-  });
+  }, { maxWait: 10000, timeout: 15000 });
 }
 
 /**
@@ -280,7 +293,7 @@ async function adminCreateStudent(institutionId, { name, matriculationNumber, de
  * Tenant scope is enforced by requireInstitutionScope in the route layer;
  * this function additionally re-verifies as defense in depth.
  */
-async function adminUpdateStudent(institutionId, studentId, data) {
+async function adminUpdateStudent(institutionId, studentId, data, actorUserId) {
   const student = await prisma.student.findUnique({
     where: { id: studentId },
     include: { user: { select: { email: true } }, institution: { select: { name: true } } },
@@ -293,6 +306,10 @@ async function adminUpdateStudent(institutionId, studentId, data) {
   const previousSetId = student.setId;
 
   const normalized = { ...data };
+  if (normalized.registryEmail !== undefined) {
+    if (student.userId) throw new ApiError('Registered account emails require a separately verified email-change flow', 409);
+    normalized.registryEmail = normalizeRegistryEmail(normalized.registryEmail);
+  }
   if (normalized.dateOfBirth !== undefined) normalized.dateOfBirth = normalized.dateOfBirth ? new Date(normalized.dateOfBirth) : null;
 
   const normalizedStudentNumber = normalized.studentNumber !== undefined ? normalizeMatriculation(normalized.studentNumber) : undefined;
@@ -330,6 +347,16 @@ async function adminUpdateStudent(institutionId, studentId, data) {
       select: PUBLIC_STUDENT_SELECT,
     });
 
+    if (normalized.registryEmail && normalized.registryEmail !== student.registryEmail) {
+      await tx.registrationOtp.updateMany({
+        where: { studentId, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+      await tx.studentAccessEvent.create({
+        data: { institutionId, studentId, actorUserId, action: 'REGISTRATION_EMAIL_CHANGE', reason: 'Institution administrator updated registry email' },
+      });
+    }
+
     if (normalized.setId && normalized.setId !== previousSetId) {
       // Leave the old class's active YearBooks (archived editions keep
       // their history), then join every active YearBook of the new class.
@@ -338,7 +365,7 @@ async function adminUpdateStudent(institutionId, studentId, data) {
     }
 
     return nextStudent;
-  });
+  }, { maxWait: 10000, timeout: 15000 });
 
   // Best-effort, deliberately isolated from the update itself — a failed
   // email (misconfigured Resend, a bounced address, whatever) must never
@@ -429,12 +456,13 @@ const CSV_HEADER_ALIASES = {
   regno: 'matriculationNumber', registrationnumber: 'matriculationNumber', registrationno: 'matriculationNumber',
   phonenumber: 'phoneNumber', phone: 'phoneNumber', phoneno: 'phoneNumber', mobile: 'phoneNumber',
   mobilenumber: 'phoneNumber', telephone: 'phoneNumber', gsm: 'phoneNumber', gsmnumber: 'phoneNumber',
+  email: 'registryEmail', emailaddress: 'registryEmail', studentemail: 'registryEmail', registryemail: 'registryEmail',
   department: 'department', departmentname: 'department', dept: 'department',
 };
-const CSV_REQUIRED = ['firstName', 'lastName', 'matriculationNumber', 'phoneNumber', 'department'];
+const CSV_REQUIRED = ['firstName', 'lastName', 'matriculationNumber', 'phoneNumber', 'department', 'registryEmail'];
 const CSV_LABELS = {
   firstName: 'First Name', lastName: 'Last Name', matriculationNumber: 'Matriculation Number',
-  phoneNumber: 'Phone Number', department: 'Department', otherNames: 'Other Names',
+  phoneNumber: 'Phone Number', registryEmail: 'Email', department: 'Department', otherNames: 'Other Names',
 };
 
 function csvRowsToObjects(rows) {
@@ -501,7 +529,7 @@ async function analyzeStudentCsv(institutionId, csvText, { setId } = {}) {
 
   const [departments, existing, academicSet] = await Promise.all([
     prisma.department.findMany({ where: { institutionId }, select: { id: true, name: true, code: true, facultyId: true } }),
-    prisma.student.findMany({ where: { institutionId }, select: { studentNumber: true } }),
+    prisma.student.findMany({ where: { institutionId }, select: { studentNumber: true, registryEmail: true } }),
     getImportAcademicSet(institutionId, setId),
   ]);
 
@@ -512,6 +540,8 @@ async function analyzeStudentCsv(institutionId, csvText, { setId } = {}) {
   });
   const existingNumbers = new Set(existing.map((s) => normalizeMatriculation(s.studentNumber)).filter(Boolean));
   const seenNumbers = new Set();
+  const seenEmails = new Set();
+  const existingEmails = new Set(existing.map((s) => s.registryEmail).filter(Boolean));
 
   const results = rows.map((row) => {
     const errors = [];
@@ -520,6 +550,11 @@ async function analyzeStudentCsv(institutionId, csvText, { setId } = {}) {
     const matriculationNumber = normalizeMatriculation(row.matriculationNumber);
     const { phone: phoneNumber, excelMangled } = normalizeImportPhone(row.phoneNumber);
     const department = deptMap.get(departmentKey(row.department));
+    const registryEmail = normalizeRegistryEmail(row.registryEmail);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registryEmail)) errors.push('Valid student email is required');
+    if (registryEmail && existingEmails.has(registryEmail)) errors.push('Email already belongs to a registry student');
+    if (registryEmail && seenEmails.has(registryEmail)) errors.push('Duplicate email in this CSV');
+    if (registryEmail) seenEmails.add(registryEmail);
     if (!firstName) errors.push('First name is required');
     if (!lastName) errors.push('Last name is required');
     if (!matriculationNumber) errors.push('Matriculation number is required');
@@ -532,7 +567,7 @@ async function analyzeStudentCsv(institutionId, csvText, { setId } = {}) {
     return {
       row: row._row,
       firstName, lastName, otherNames: row.otherNames || '',
-      matriculationNumber, phoneNumber,
+      matriculationNumber, phoneNumber, registryEmail,
       department: department?.name || row.department || '', departmentId: department?.id || null,
       facultyId: department?.facultyId || null,
       valid: errors.length === 0, errors,
@@ -596,11 +631,11 @@ async function importStudentRow(institutionId, academicSet, row) {
           code, userId: null, institutionId,
           setId: academicSet.id, departmentId: row.departmentId, facultyId: row.facultyId,
           studentNumber: row.matriculationNumber, firstName: row.firstName, lastName: row.lastName,
-          otherNames: row.otherNames || null, phoneNumber: row.phoneNumber, verificationStatus: 'VERIFIED', privacy: { create: {} },
+          otherNames: row.otherNames || null, phoneNumber: row.phoneNumber, registryEmail: row.registryEmail, verificationStatus: 'VERIFIED', privacy: { create: {} },
         }, select: { id: true } });
         await enrollStudentsInClassYearBooks(tx, { institutionId, setId: academicSet.id, studentIds: [created.id] });
         return created;
-      });
+      }, { maxWait: 10000, timeout: 15000 });
     } catch (err) {
       if (isCodeCollision(err) && attempt < 4) continue;
       throw err;
@@ -639,7 +674,7 @@ async function bulkCreateStudents(institutionId, csvText, { setId } = {}) {
             code: codes[idx], userId: null, institutionId,
             setId: academicSet.id, departmentId: row.departmentId, facultyId: row.facultyId,
             studentNumber: row.matriculationNumber, firstName: row.firstName, lastName: row.lastName,
-            otherNames: row.otherNames || null, phoneNumber: row.phoneNumber, verificationStatus: 'VERIFIED',
+            otherNames: row.otherNames || null, phoneNumber: row.phoneNumber, registryEmail: row.registryEmail, verificationStatus: 'VERIFIED',
           })),
           skipDuplicates: true,
           select: { id: true, studentNumber: true },

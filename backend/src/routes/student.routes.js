@@ -29,6 +29,20 @@ const automation = require('../services/studentAccessAutomation.service');
 const { ok } = require('../utils/apiResponse');
 const router = express.Router();
 
+// Institution-admin-only recovery; phone changes are audited and revoke pending OTPs.
+router.patch('/:id/registration-phone', authenticate, requireRole('INSTITUTION_ADMIN'),
+  requireInstitutionScope((req) => getStudentInstitutionId(req.params.id)),
+  validate(z.object({
+    phoneNumber: z.string().trim().regex(/^0[789]\d{9}$/),
+    reason: z.string().trim().min(10).max(500),
+  })), async (req, res, next) => {
+    try {
+      const { recoverStudentPhone } = require('../services/phoneRecovery.service');
+      return ok(res, await recoverStudentPhone(req.context.institutionId,
+        req.params.id, req.context.userId, req.body));
+    } catch (error) { next(error); }
+  });
+
 router.patch('/:id/registry-approval', authenticate, requireRole('INSTITUTION_ADMIN'),
   requireInstitutionScope((req) => getStudentInstitutionId(req.params.id)),
   validate(z.object({

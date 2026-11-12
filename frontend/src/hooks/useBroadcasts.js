@@ -5,8 +5,8 @@ export function useSentBroadcasts(params) {
   return useQuery({ queryKey: ['broadcasts', 'sent', params], queryFn: () => broadcastService.listSent(params) });
 }
 
-export function useMyBroadcasts(params) {
-  return useQuery({ queryKey: ['broadcasts', 'mine', params], queryFn: () => broadcastService.listMine(params) });
+export function useMyBroadcasts(params, enabled = true) {
+  return useQuery({ queryKey: ['broadcasts', 'mine', params], queryFn: () => broadcastService.listMine(params), enabled });
 }
 
 export function useMarkBroadcastRead() {

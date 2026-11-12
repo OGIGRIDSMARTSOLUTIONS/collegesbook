@@ -20,8 +20,18 @@ async function authenticate(req, res, next) {
       throw new ApiError('Invalid or expired session', 401);
     }
 
+    req.context = await buildAuthContext(payload.sub);
+
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+async function buildAuthContext(userId) {
     const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
+      where: { id: userId },
       include: {
         student: {
           include: { privacy: true },
@@ -39,7 +49,7 @@ async function authenticate(req, res, next) {
     // req.context is the single source of truth for the rest of the
     // request pipeline — controllers/services must read from here, never
     // from req.body for anything identity- or permission-related.
-    req.context = {
+    return {
       userId: user.id,
       role: user.role,
       accountStatus: user.accountStatus,
@@ -52,10 +62,6 @@ async function authenticate(req, res, next) {
       privacy: user.student?.privacy ?? null,
     };
 
-    next();
-  } catch (err) {
-    next(err);
-  }
 }
 
 /**
@@ -70,4 +76,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { authenticate, requireRole };
+module.exports = { authenticate, requireRole, buildAuthContext };

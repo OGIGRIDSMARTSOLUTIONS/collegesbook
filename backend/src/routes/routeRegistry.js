@@ -2,6 +2,7 @@
  * Preserve existing prefixes to avoid breaking frontend and mobile clients.
  */
 module.exports = [
+  { path: '/warmup', router: require('./warmup.routes') },
   { path: '/auth', router: require('./auth.routes') },
   { path: '/institutions', router: require('./institution.routes') },
   { path: '/students', router: require('./student.routes') },

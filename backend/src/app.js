@@ -6,6 +6,7 @@ const routes = require('./routes');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 const { generalLimiter } = require('./middleware/rateLimit.middleware');
 const prisma = require('./config/db');
+const { requestSecurity, isAllowedOrigin } = require('./middleware/requestSecurity.middleware');
 
 const app = express();
 
@@ -27,15 +28,20 @@ app.use((req, res, next) => {
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin(origin, callback) {
+      if (!origin || isAllowedOrigin(origin)) return callback(null, true);
+      return callback(new Error('CORS origin not permitted'));
+    },
     credentials: true, // required for httpOnly cookie auth across origins
   })
 );
 app.use(express.json({ limit: '6mb' }));
 app.use(cookieParser());
+app.use(requestSecurity);
 app.use('/api', generalLimiter);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/ready', (req, res) => res.status(app.locals.databaseReady ? 200 : 503).json({ status: app.locals.databaseReady ? 'ready' : 'starting' }));
 app.get('/health/db', async (req, res) => {
   const started = Date.now();
   try {

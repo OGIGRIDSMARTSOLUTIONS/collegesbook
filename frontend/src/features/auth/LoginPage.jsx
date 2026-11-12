@@ -1,19 +1,25 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
-import { AuthLayout } from '../../layouts/AuthLayout';
+import { LoginShowcaseLayout } from '../../layouts/LoginShowcaseLayout';
 import { TextField } from '../../components/TextField';
 import { Button } from '../../components/Button';
 import { useAuth } from '../../hooks/useAuth';
+import { toast } from '../../lib/toast';
+import { useBackendWarmup } from '../../hooks/useBackendWarmup';
 
 export default function LoginPage() {
+  useBackendWarmup();
   const { login, isLoggingIn, loginWithGoogle, isLoggingInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState(null);
 
-  const redirectTo = location.state?.from?.pathname || '/';
+  const requestedPath = location.state?.from?.pathname;
+  const redirectTo = requestedPath && requestedPath !== '/' && requestedPath !== '/login'
+    ? requestedPath
+    : '/news-feeds';
   // Mirrors main.jsx's own check — GoogleOAuthProvider only wraps the app
   // when this is set, so <GoogleLogin> would throw (missing context) if
   // rendered without it. Same "optional feature, no half-configured
@@ -25,9 +31,10 @@ export default function LoginPage() {
     setError(null);
     try {
       const result = await login(form);
-      navigate(result.role === 'SUPER_ADMIN' ? '/super-admin' : redirectTo, { replace: true });
+      navigate(result.role === 'SUPER_ADMIN' ? '/superadmin' : redirectTo, { replace: true });
     } catch (err) {
       setError(err.message || 'Unable to sign in');
+      toast.error(err.message || 'Unable to sign in');
     }
   }
 
@@ -35,15 +42,16 @@ export default function LoginPage() {
     setError(null);
     try {
       const result = await loginWithGoogle(credentialResponse.credential);
-      navigate(result.role === 'SUPER_ADMIN' ? '/super-admin' : redirectTo, { replace: true });
+      navigate(result.role === 'SUPER_ADMIN' ? '/superadmin' : redirectTo, { replace: true });
     } catch (err) {
       setError(err.message || 'Unable to sign in with Google');
+      toast.error(err.message || 'Unable to sign in with Google');
     }
   }
 
   return (
-    <AuthLayout title="Welcome back" subtitle="Sign in to your CollegeBook account.">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <LoginShowcaseLayout>
+      <form onSubmit={handleSubmit} className="cb-login-form">
         <TextField
           label="Email"
           type="email"
@@ -75,7 +83,7 @@ export default function LoginPage() {
 
       {googleEnabled && (
         <>
-          <div className="my-4 flex items-center gap-3">
+          <div className="cb-login-divider flex items-center gap-3">
             <div className="h-px flex-1 bg-border" />
             <span className="text-xs text-text-secondary">OR</span>
             <div className="h-px flex-1 bg-border" />
@@ -85,24 +93,24 @@ export default function LoginPage() {
               onSuccess={handleGoogleSuccess}
               onError={() => setError('Google sign-in failed')}
               text="signin_with"
-              width="100%"
+              width="300"
             />
           </div>
           {isLoggingInWithGoogle && (
             <p className="mt-2 text-center text-sm text-text-secondary">Signing in…</p>
           )}
-          <p className="mt-2 text-center text-xs text-text-secondary">
+          <p className="cb-login-google-note">
             Only works if you already have a CollegeBook account with this email.
           </p>
         </>
       )}
 
-      <p className="mt-6 text-sm text-text-secondary">
+      <p className="cb-login-register">
         New to CollegeBook?{' '}
         <Link to="/register" className="font-medium text-brand hover:text-brand-hover">
           Create an account
         </Link>
       </p>
-    </AuthLayout>
+    </LoginShowcaseLayout>
   );
 }

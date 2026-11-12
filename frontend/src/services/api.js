@@ -4,38 +4,63 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api'
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  withCredentials: true, // send/receive the httpOnly accessToken/refreshToken cookies
+  withCredentials: true,
 });
 
-// Every backend response is { success, data } or { success: false, message,
-// details }. Unwrap `data` here so the rest of the app just works with
-// plain values instead of reaching into response.data.data everywhere.
+// Keep refresh separate to prevent interceptor recursion. Share concurrent refreshes.
+const refreshApi = axios.create({ baseURL: API_BASE_URL, withCredentials: true });
+
+// Bypasses silent refresh for sensitive administrator route verification.
+export const strictAuthApi = axios.create({
+  baseURL: API_BASE_URL,
+  withCredentials: true,
+});
+let pendingRefresh = null;
+
+function refreshSession() {
+  if (!pendingRefresh) {
+    pendingRefresh = refreshApi.post('/auth/refresh').finally(() => {
+      pendingRefresh = null;
+    });
+  }
+  return pendingRefresh;
+}
+
 api.interceptors.response.use(
   (response) => response.data?.data,
   async (error) => {
     const original = error.config;
     const status = error.response?.status;
-    const message = error.response?.data?.message || error.message;
+    const url = original?.url || '';
+    const noRefresh = [
+      '/auth/login', '/auth/register', '/auth/google', '/auth/logout',
+      '/auth/refresh', '/auth/forgot-password', '/auth/reset-password',
+    ];
+    const excluded = noRefresh.some((path) => url === path || url.startsWith(`${path}?`));
 
-    // Silent refresh: a 401 on anything other than the auth endpoints
-    // themselves gets one retry after refreshing the access token. This
-    // is what makes the 15-minute access token invisible to the user in
-    // normal use — only a truly expired *refresh* token (or no session at
-    // all) surfaces as a real "logged out" state.
-    const isAuthRoute = original?.url?.startsWith('/auth/');
-    if (status === 401 && !isAuthRoute && !original._retried) {
+    if (status === 401 && original && !original._retried && !excluded) {
       original._retried = true;
       try {
-        await api.post('/auth/refresh');
+        await refreshSession();
         return api(original);
       } catch {
-        // Refresh itself failed — genuinely logged out. Let the caller's
-        // own error handling (or the ProtectedRoute redirect) take it
-        // from here rather than forcing a hard redirect from inside the
-        // API client.
+        // No refresh session: let the caller handle the unauthenticated state.
       }
     }
 
-    return Promise.reject({ status, message, details: error.response?.data?.details });
+    return Promise.reject({
+      status,
+      message: error.response?.data?.message || error.message,
+      details: error.response?.data?.details,
+    });
   }
+);
+
+// Keep the error shape consistent with the regular API client.
+strictAuthApi.interceptors.response.use(
+  (response) => response.data?.data,
+  (error) => Promise.reject({
+    status: error.response?.status,
+    message: error.response?.data?.message || error.message,
+  })
 );

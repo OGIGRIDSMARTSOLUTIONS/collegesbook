@@ -10,6 +10,7 @@ export const useAuthStore = create((set) => ({
   context: null,
   status: 'loading', // 'loading' | 'authenticated' | 'unauthenticated'
 
+  setChecking: () => set({ context: null, status: 'loading' }),
   setContext: (context) => set({ context, status: 'authenticated' }),
   clearContext: () => set({ context: null, status: 'unauthenticated' }),
 }));

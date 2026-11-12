@@ -10,6 +10,8 @@ import { useToggleSavedPost } from '../../hooks/useSavedPosts';
 import { ImageDropzone } from '../../components/ImageDropzone';
 import { useSubmitReport } from '../../hooks/useReports';
 import { useYearbooks } from '../../hooks/useYearbook';
+import { useAuthStore } from '../../store/authStore';
+import { loadPublicFeedPreview, storePublicFeedPreview } from '../../utils/publicFeedPreview';
 
 const FEED_SOCKET_EVENTS = ['feed:new-post', 'feed:changed', 'connect'];
 const FEED_QUERY_KEYS = [['feed']];
@@ -82,6 +84,7 @@ function BookIcon() {
 
 export default function FeedPage() {
   const queryClient = useQueryClient();
+  const context = useAuthStore((state) => state.context);
   const [searchParams] = useSearchParams();
   const hashtag = searchParams.get('hashtag') || '';
   const highlightedPostId = searchParams.get('post');
@@ -95,6 +98,15 @@ export default function FeedPage() {
     staleTime: 30_000,
   });
   const posts = feedQuery.data?.pages?.flatMap((page) => page.items) || [];
+  const [publicPreview, setPublicPreview] = useState([]);
+  useEffect(() => {
+    setPublicPreview(loadPublicFeedPreview(context?.studentId, context?.institutionId));
+  }, [context?.studentId, context?.institutionId]);
+  useEffect(() => {
+    if (!hashtag && feedQuery.isSuccess && posts.length) {
+      storePublicFeedPreview(context?.studentId, context?.institutionId, posts);
+    }
+  }, [hashtag, feedQuery.dataUpdatedAt, context?.studentId, context?.institutionId]);
   useEffect(() => {
     const target = loadMoreRef.current;
     if (!target || !feedQuery.hasNextPage) return undefined;
@@ -151,6 +163,17 @@ export default function FeedPage() {
 
   return (
     <div className="w-full min-w-0 max-w-none space-y-4">
+      {!feedQuery.data && publicPreview.length > 0 && !hashtag && (
+        <section className="rounded-lg border border-border bg-surface p-4" aria-label="Previously viewed public posts">
+          <p className="mb-3 text-xs font-medium text-text-secondary">Previously viewed public posts · refreshing…</p>
+          {publicPreview.map((item) => (
+            <article key={item.id} className="border-t border-border py-3">
+              <p className="text-sm font-semibold">{item.authorName}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm">{item.body}</p>
+            </article>
+          ))}
+        </section>
+      )}
       <YearbookSpotlight />
       {hashtag && (
         <div className="flex items-center justify-between rounded-lg bg-brand-soft p-3 text-sm">
@@ -176,7 +199,7 @@ export default function FeedPage() {
           <div className="mt-2 flex flex-wrap gap-2">
             {images.map((url, i) => (
               <div key={url} className="relative h-16 w-16 overflow-hidden rounded-md border border-border">
-                <img src={url} alt="" className="h-full w-full object-cover" />
+                <img src={url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                 <button
                   type="button"
                   onClick={() => setImages((imgs) => imgs.filter((_, idx) => idx !== i))}
@@ -319,7 +342,8 @@ function ReportForm({ postId, onDone }) {
   );
 }
 
-function PostMenu({ postId }) {
+function PostMenu({ post }) {
+  const postId = post.id;
   const [open, setOpen] = useState(false);
   const [reporting, setReporting] = useState(false);
   const { save } = useToggleSavedPost();
@@ -337,7 +361,7 @@ function PostMenu({ postId }) {
         <div className="absolute right-0 z-10 mt-1 w-36 overflow-hidden rounded-md border border-border bg-surface shadow-sm">
           <button
             onClick={() => {
-              save.mutate(postId);
+              save.mutate(post);
               setOpen(false);
             }}
             className="block w-full px-3 py-2 text-left text-sm text-text hover:bg-bg"
@@ -367,11 +391,27 @@ export function PostCard({ post }) {
   const [quote, setQuote] = useState('');
   const repost = useMutation({
     mutationFn: (text) => postService.repost(post.id, text),
-    onSuccess: () => {
-      setShowQuote(false);
-      setQuote('');
-      queryClient.invalidateQueries({ queryKey: ['feed'] });
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ['feed'] });
+      const previous = queryClient.getQueriesData({ queryKey: ['feed'] });
+      queryClient.setQueriesData({ queryKey: ['feed'] }, (data) => {
+        if (!data?.pages) return data;
+        return { ...data, pages: data.pages.map((page) => ({
+          ...page,
+          items: page.items.map((item) => item.id === post.id ? {
+            ...item,
+            repostedByMe: !item.repostedByMe,
+            repostCount: Math.max(0, (Number(item.repostCount) || 0) + (item.repostedByMe ? -1 : 1)),
+          } : item),
+        })) };
+      });
+      return { previous };
     },
+    onSuccess: () => { setShowQuote(false); setQuote(''); },
+    onError: (_error, _text, context) => {
+      context?.previous?.forEach(([key, data]) => queryClient.setQueryData(key, data));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['feed'] }),
   });
   const react = useMutation({
     mutationFn: () => postService.react(post.id, 'LIKE'),
@@ -417,7 +457,7 @@ export function PostCard({ post }) {
             </p>
           </div>
         </Link>
-        <PostMenu postId={post.id} />
+        <PostMenu post={post} />
       </div>
       {post.repostOf && <p className="mt-2 text-xs font-medium text-brand">↻ Reposted from {post.repostOf.author?.firstName} {post.repostOf.author?.lastName}</p>}
       {post.body && <HashtagText text={post.body} />}
@@ -431,7 +471,7 @@ export function PostCard({ post }) {
       {post.images?.length > 0 && (
         <div className={`mt-3 grid gap-1 ${post.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
           {post.images.map((url) => (
-            <img key={url} src={url} alt="" className="max-h-96 w-full rounded-md object-cover" />
+            <img key={url} src={url} alt="" loading="lazy" decoding="async" className="max-h-96 w-full rounded-md object-cover" />
           ))}
         </div>
       )}

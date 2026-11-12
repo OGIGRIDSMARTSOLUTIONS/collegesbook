@@ -68,7 +68,8 @@ async function adminUpdateStudentHandler(req, res, next) {
     const student = await studentService.adminUpdateStudent(
       req.context.institutionId,
       req.params.id,
-      req.body
+      req.body,
+      req.context.userId
     );
     return ok(res, student);
   } catch (err) {

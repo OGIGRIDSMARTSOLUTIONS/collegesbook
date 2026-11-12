@@ -10,9 +10,10 @@ export function useNotifications(page = 1) {
 // messages do). A 30s interval is cheap and matches how the bell is
 // normally glanced at, not watched continuously — worth wiring to a
 // socket event later if that changes.
-export function useUnreadCount() {
+export function useUnreadCount(enabled = true) {
   return useQuery({
     queryKey: ['notifications', 'unread-count'],
+    enabled,
     queryFn: notificationService.unreadCount,
     staleTime: 15_000,
     refetchInterval: 30_000, // recovery fallback if websocket is unavailable

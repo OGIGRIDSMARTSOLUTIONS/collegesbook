@@ -1,3 +1,4 @@
+const { isAllowedOrigin, permittedOrigins } = require('../middleware/requestSecurity.middleware');
 const { Server } = require('socket.io');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const prisma = require('../config/db');
@@ -52,8 +53,12 @@ async function isOnline(studentId) {
  */
 function initSocket(httpServer) {
   io = new Server(httpServer, {
+    allowRequest: (req, callback) => {
+      const origin = req.headers.origin;
+      callback(null, Boolean(origin && isAllowedOrigin(origin)));
+    },
     cors: {
-      origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+      origin: [...permittedOrigins()],
       credentials: true,
     },
   });

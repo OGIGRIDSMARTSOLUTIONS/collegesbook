@@ -2,9 +2,11 @@ const express = require('express');
 const { validate } = require('../middleware/validate.middleware');
 const { authenticate } = require('../middleware/auth.middleware');
 const { authLimiter, registerVerificationLimiter } = require('../middleware/rateLimit.middleware');
-const { registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema, forgotPasswordSchema, resetPasswordSchema } = require('../validators/auth.validators');
+const { startRegistrationOtpSchema, completeRegistrationOtpSchema, registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema, forgotPasswordSchema, resetPasswordSchema } = require('../validators/auth.validators');
 const {
   registerHandler,
+  startRegistrationOtpHandler,
+  completeRegistrationOtpHandler,
   forgotPasswordHandler,
   resetPasswordHandler,
   registrationDepartmentsHandler,
@@ -21,7 +23,10 @@ const router = express.Router();
 // the ones worth protecting most against credential-stuffing/brute force.
 // Matric number in, that school's departments out (no school is named).
 router.post('/registration-departments', authLimiter, validate(registrationDepartmentsSchema), registrationDepartmentsHandler);
-router.post('/register', authLimiter, registerVerificationLimiter, validate(registerSchema), registerHandler);
+// Legacy direct registration is disabled: OTP is mandatory for new accounts.
+router.post('/register', (req, res) => res.status(410).json({ success: false, message: 'SMS verification is required. Update your CollegeBook app.' }));
+router.post('/register/start', authLimiter, registerVerificationLimiter, validate(startRegistrationOtpSchema), startRegistrationOtpHandler);
+router.post('/register/complete', authLimiter, registerVerificationLimiter, validate(completeRegistrationOtpSchema), completeRegistrationOtpHandler);
 router.post('/forgot-password', authLimiter, validate(forgotPasswordSchema), forgotPasswordHandler);
 router.post('/reset-password', authLimiter, validate(resetPasswordSchema), resetPasswordHandler);
 router.post('/login', authLimiter, validate(loginSchema), loginHandler);

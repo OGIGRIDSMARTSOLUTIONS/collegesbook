@@ -1,5 +1,6 @@
 const prisma = require('../config/db');
 const crypto = require('node:crypto');
+const { sendRegistrationOtp } = require('./registrationEmail.service');
 const { resend, isEmailConfigured, fromAddress } = require('../config/resend');
 const { enrollStudentsInClassYearBooks } = require('./yearbookEnrollment.service');
 const { OAuth2Client } = require('google-auth-library');
@@ -85,7 +86,7 @@ async function registrationDepartments({ matriculationNumber }) {
   return departments.map((d) => ({ id: d.id, name: d.name, facultyName: d.faculty?.name ?? null }));
 }
 
-async function register({ email, password, matriculationNumber, departmentId, department, phoneNumber }) {
+async function register({ email, password, matriculationNumber, departmentId, department, phoneNumber, expectedStudentId }) {
   const normalizedEmail = String(email ?? '').trim().toLowerCase();
   // PostgreSQL text uniqueness is case-sensitive by default; check regardless of case.
   const existing = await prisma.user.findFirst({
@@ -146,6 +147,9 @@ async function register({ email, password, matriculationNumber, departmentId, de
   }
 
   const match = matches[0].student;
+  if (expectedStudentId && match.id !== expectedStudentId) {
+    throw new ApiError('Student registry match changed. Request a new code.', 409);
+  }
   if (!match.registryApproved) throw new ApiError('Institution has withdrawn approval for this student', 403);
   if (match.userId) {
     throw new ApiError('This institutional student record already has a CollegeBook account', 409);
@@ -197,6 +201,204 @@ async function register({ email, password, matriculationNumber, departmentId, de
   }
 
   return { ...user, firstName, lastName, institutionId: match.institutionId, studentId: match.id };
+}
+
+
+const OTP_TTL_MS = 5 * 60 * 1000;
+const OTP_RESEND_MS = 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+
+function normalizeRegistryEmail(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function otpDigest(challengeId, code) {
+  const secret = process.env.REGISTRATION_OTP_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new ApiError('Registration verification is not configured', 503);
+  }
+  return crypto.createHmac('sha256', secret).update(`${challengeId}:${code}`).digest('hex');
+}
+
+function maskEmail(email) {
+  const [local, domain] = email.split('@');
+  return `${local.slice(0, 2)}***@${domain}`;
+}
+
+async function startRegistrationOtp({ matriculationNumber, departmentId, phoneNumber, email }) {
+  const records = await prisma.student.findMany({
+    where: {
+      studentNumber: { in: matriculationVariantsOf(matriculationNumber) },
+      userId: null,
+      registryApproved: true,
+      institution: { status: 'ACTIVE' },
+    },
+    select: { id: true, registryEmail: true, phoneNumber: true, departmentId: true },
+    take: 10,
+  });
+
+  const matches = records.filter((student) => {
+    const departmentMatches = Boolean(departmentId && student.departmentId === departmentId);
+    const phoneMatches = Boolean(
+      phoneNumber && student.phoneNumber &&
+      normalizePhone(student.phoneNumber) === normalizePhone(phoneNumber)
+    );
+    return departmentMatches || phoneMatches;
+  });
+
+  if (matches.length !== 1 || !matches[0].registryEmail) {
+    throw new ApiError('Unable to verify registry details or no registered email is available. Contact your institution administrator.', 400);
+  }
+
+  if (!isEmailConfigured() || !process.env.REGISTRATION_OTP_SECRET ||
+      process.env.REGISTRATION_OTP_SECRET.length < 32) {
+    throw new ApiError('Email verification is temporarily unavailable', 503);
+  }
+
+  const student = matches[0];
+  const destination = normalizeRegistryEmail(student.registryEmail);
+  if (normalizeRegistryEmail(email) !== destination) {
+    throw new ApiError('Registration details do not match the institution record. Contact your administrator.', 400);
+  }
+  const existing = await prisma.registrationOtp.findFirst({
+    where: { studentId: student.id, consumedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (existing && Date.now() - existing.createdAt.getTime() < OTP_RESEND_MS) {
+    throw new ApiError('Please wait 60 seconds before requesting another code', 429);
+  }
+
+  const id = crypto.randomUUID();
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  const emailDigest = crypto.createHash('sha256').update(destination).digest('hex');
+
+  await prisma.$transaction(async (tx) => {
+    await tx.registrationOtp.updateMany({
+      where: { studentId: student.id, consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+    await tx.registrationOtp.create({
+      data: {
+        id,
+        studentId: student.id,
+        emailDigest,
+        codeDigest: otpDigest(id, code),
+        expiresAt: new Date(Date.now() + OTP_TTL_MS),
+      },
+    });
+  });
+
+  try {
+    await sendRegistrationOtp(destination, code);
+  } catch (error) {
+    await prisma.registrationOtp.updateMany({
+      where: { id },
+      data: { consumedAt: new Date() },
+    });
+    console.error('[registration-email] Delivery failed:', error.message);
+    throw new ApiError('Verification email could not be delivered. Please try later.', 503);
+  }
+
+  return { challengeId: id, maskedEmail: maskEmail(destination), expiresInSeconds: 300 };
+}
+
+async function completeRegistrationOtp({ challengeId, code, email, password }) {
+  const normalizedEmail = normalizeRegistryEmail(email);
+  const challenge = await prisma.registrationOtp.findUnique({
+    where: { id: challengeId },
+    include: {
+      student: {
+        select: {
+          id: true,
+          registryEmail: true,
+          userId: true,
+          registryApproved: true,
+          institution: { select: { status: true } },
+        },
+      },
+    },
+  });
+
+  if (!challenge || challenge.consumedAt || challenge.expiresAt <= new Date() ||
+      challenge.attempts >= OTP_MAX_ATTEMPTS) {
+    throw new ApiError('Verification code expired or invalid. Request a new code.', 400);
+  }
+
+  // Failed attempts must persist even if account creation is rolled back.
+  const attempts = await prisma.registrationOtp.updateMany({
+    where: {
+      id: challengeId,
+      consumedAt: null,
+      attempts: { lt: OTP_MAX_ATTEMPTS },
+      expiresAt: { gt: new Date() },
+    },
+    data: { attempts: { increment: 1 } },
+  });
+  if (attempts.count !== 1) throw new ApiError('Verification code expired or invalid.', 400);
+
+  const expected = otpDigest(challengeId, code);
+  if (!crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(challenge.codeDigest, 'hex'))) {
+    throw new ApiError('Incorrect verification code', 400);
+  }
+
+  const student = challenge.student;
+  if (!student || student.userId || !student.registryApproved ||
+      student.institution.status !== 'ACTIVE' ||
+      normalizeRegistryEmail(student.registryEmail) !== normalizedEmail ||
+      crypto.createHash('sha256').update(normalizedEmail).digest('hex') !== challenge.emailDigest) {
+    throw new ApiError('Registry email or student record changed. Request a new code.', 409);
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const consumed = await tx.registrationOtp.updateMany({
+        where: {
+          id: challengeId,
+          consumedAt: null,
+          expiresAt: { gt: new Date() },
+          attempts: { lte: OTP_MAX_ATTEMPTS },
+        },
+        data: { consumedAt: new Date() },
+      });
+      if (consumed.count !== 1) throw new ApiError('Verification code already used', 409);
+
+      const current = await tx.student.findFirst({
+        where: {
+          id: student.id,
+          userId: null,
+          registryApproved: true,
+          registryEmail: normalizedEmail,
+          institution: { status: 'ACTIVE' },
+        },
+        select: { id: true },
+      });
+      if (!current) throw new ApiError('Student registry record changed', 409);
+
+      const existingUser = await tx.user.findFirst({
+        where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (existingUser) throw new ApiError('This email already has a CollegeBook account', 409);
+
+      const user = await tx.user.create({
+        data: { email: normalizedEmail, passwordHash, role: 'STUDENT', accountStatus: 'ACTIVE' },
+      });
+      const claimed = await tx.student.updateMany({
+        where: { id: student.id, userId: null, registryEmail: normalizedEmail },
+        data: { userId: user.id, verificationStatus: 'VERIFIED' },
+      });
+      if (claimed.count !== 1) throw new ApiError('Student already registered', 409);
+      return user;
+    }, { maxWait: 10000, timeout: 15000 });
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      throw new ApiError('This email or student account is already registered', 409);
+    }
+    throw error;
+  }
 }
 
 async function login({ email, password }) {
@@ -303,27 +505,67 @@ async function refresh(refreshToken) {
   return { accessToken, user };
 }
 
-/** Password reset tokens are random, one-use and stored only as SHA-256 digests. */
+/**
+ * Password-reset requests always return the same public response, regardless
+ * of account existence or email delivery status. Operational failures are
+ * recorded server-side without exposing the token or email address.
+ */
 async function requestPasswordReset({ email }) {
-  const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
-  // Never disclose whether an account exists.
-  if (!user || !isEmailConfigured()) return;
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+
+  if (!isEmailConfigured()) {
+    console.error('[password-reset] Email provider unavailable: configure RESEND_API_KEY and RESEND_FROM_EMAIL.');
+    return;
+  }
+
+  // Avoid revealing whether an address belongs to a CollegeBook account.
+  if (!user) return;
 
   const token = crypto.randomBytes(32).toString('hex');
   const passwordResetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const passwordResetExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
-  await prisma.user.update({ where: { id: user.id }, data: { passwordResetTokenHash, passwordResetExpiresAt } });
-  const baseUrl = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '');
-  const url = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+
+  const { passwordResetUrl } = require('../utils/passwordResetUrl');
+  let url;
+  try {
+    url = passwordResetUrl(token);
+  } catch (error) {
+    console.error('[password-reset] Configuration error:', error.message);
+    return;
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordResetTokenHash, passwordResetExpiresAt },
+  });
+
   try {
     const result = await resend.emails.send({
-      from: fromAddress(), to: user.email, subject: 'Reset your CollegeBook password',
+      from: fromAddress(),
+      to: user.email,
+      subject: 'Reset your CollegeBook password',
       text: `A password reset was requested for your CollegeBook account.\n\nOpen this link within 15 minutes:\n${url}\n\nIf you did not request this, ignore this email.`,
     });
-    if (result.error) throw result.error;
+
+    if (result?.error) {
+      throw new Error(result.error.message || 'Email provider rejected the request');
+    }
+    if (!result?.data?.id) {
+      throw new Error('Email provider did not confirm message acceptance');
+    }
+
+    console.info('[password-reset] Reset email accepted by provider');
   } catch (error) {
-    await prisma.user.update({ where: { id: user.id }, data: { passwordResetTokenHash: null, passwordResetExpiresAt: null } });
-    console.error('Password reset email delivery failed:', error.message);
+    // Conditional cleanup avoids invalidating a newer reset request.
+    await prisma.user.updateMany({
+      where: { id: user.id, passwordResetTokenHash },
+      data: { passwordResetTokenHash: null, passwordResetExpiresAt: null },
+    }).catch((cleanupError) => {
+      console.error('[password-reset] Token cleanup failed:', cleanupError.message);
+    });
+
+    console.error('[password-reset] Email delivery failed:', error.message);
   }
 }
 
@@ -342,4 +584,4 @@ async function resetPassword({ token, password }) {
   if (result.count !== 1) throw new ApiError('Reset link is invalid or has expired', 400);
 }
 
-module.exports = { register, registrationDepartments, login, loginWithGoogle, refresh, requestPasswordReset, resetPassword };
+module.exports = { startRegistrationOtp, completeRegistrationOtp, register, registrationDepartments, login, loginWithGoogle, refresh, requestPasswordReset, resetPassword };

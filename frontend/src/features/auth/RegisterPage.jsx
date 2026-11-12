@@ -20,6 +20,9 @@ export default function RegisterPage() {
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [challenge, setChallenge] = useState(null);
+  const [otp, setOtp] = useState('');
+  const [sendingOtp, setSendingOtp] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [loadingDepartments, setLoadingDepartments] = useState(false);
   const [departmentError, setDepartmentError] = useState('');
@@ -78,21 +81,33 @@ export default function RegisterPage() {
     setError(null);
 
     if (!form.departmentId && !form.phoneNumber.trim()) {
-      setError('Enter either your department or phone number for student verification.');
+      setError('Enter your department or registered phone number to locate your student record.');
       return;
     }
 
     try {
-      await register({
-        matriculationNumber: form.matriculationNumber.trim(),
-        departmentId: form.departmentId || undefined,
-        phoneNumber: form.phoneNumber.trim() || undefined,
-        email: form.email.trim(),
-        password: form.password,
-      });
-      setSuccess(true);
+      if (!challenge) {
+        setSendingOtp(true);
+        const response = await authService.startRegistrationOtp({
+          matriculationNumber: form.matriculationNumber.trim(),
+          departmentId: form.departmentId || undefined,
+          phoneNumber: form.phoneNumber.trim() || undefined,
+          email: form.email.trim(),
+        });
+        setChallenge(response);
+      } else {
+        await register({
+          challengeId: challenge.challengeId,
+          code: otp.trim(),
+          email: form.email.trim(),
+          password: form.password,
+        });
+        setSuccess(true);
+      }
     } catch (err) {
-      setError(err.message || 'Unable to create your account');
+      setError(err.message || 'Unable to verify your registration');
+    } finally {
+      setSendingOtp(false);
     }
   }
 
@@ -113,15 +128,35 @@ export default function RegisterPage() {
   return (
     <AuthLayout title="Create your account" subtitle="Verify your student identity and join your institution on CollegeBook.">
       <form onSubmit={handleSubmit} className="space-y-4">
+        {challenge && (
+          <div className="rounded-xl border border-brand/20 bg-brand-soft/40 p-4">
+            <p className="text-sm font-semibold text-text">Verify your institution-registered email</p>
+            <p className="mt-1 text-xs text-text-secondary">
+              Enter the six-digit code sent to {challenge.maskedEmail}. The code expires in five minutes.
+            </p>
+            <TextField
+              label="Email verification code"
+              value={otp}
+              onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              required
+            />
+            <button type="button" className="mt-2 text-xs font-semibold text-brand"
+              onClick={() => { setChallenge(null); setOtp(''); setError(null); }}>
+              Request another code or correct details
+            </button>
+          </div>
+        )}
         <div className="rounded-xl border border-brand/20 bg-brand-soft/40 p-4 text-sm text-text-secondary">
           <p className="font-semibold text-text">Student verification</p>
           <p className="mt-1 leading-6">
-            Your matriculation number is required. Enter either your department, phone number, or both.
+            Your matriculation number is required. Enter your department or the phone number recorded by your institution. An email code will be sent only to the email address supplied by your institution.
             Your institution already has the academic record — CollegeBook will place your account in the correct department, set and YearBook automatically.
           </p>
         </div>
 
-        <TextField
+        {!challenge && <><TextField
           label="Matriculation number"
           required
           placeholder="e.g. CSC/2022/045"
@@ -164,7 +199,17 @@ export default function RegisterPage() {
 
         <p className="-mt-1 text-xs text-text-secondary">At least one of Department or Phone number is required.</p>
 
-        <TextField label="Email" type="email" autoComplete="email" required value={form.email} onChange={update('email')} />
+        </>}
+
+        <TextField
+          label="Institution-registered email"
+          type="email"
+          autoComplete="email"
+          required
+          value={form.email}
+          disabled={Boolean(challenge)}
+          onChange={update('email')}
+        />
         <TextField
           label="Password"
           type="password"
@@ -177,8 +222,8 @@ export default function RegisterPage() {
 
         {error && <div className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div>}
 
-        <Button type="submit" className="w-full" disabled={isRegistering}>
-          {isRegistering ? 'Verifying student record…' : 'Create account'}
+        <Button type="submit" className="w-full" disabled={isRegistering || sendingOtp || (Boolean(challenge) && otp.length !== 6)}>
+          {isRegistering || sendingOtp ? 'Processing…' : challenge ? 'Verify code and create account' : 'Send email verification code'}
         </Button>
       </form>
       <p className="mt-6 text-sm text-text-secondary">

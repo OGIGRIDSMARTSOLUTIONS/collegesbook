@@ -1,7 +1,8 @@
-import { api } from './api';
+import { api, strictAuthApi } from './api';
 
 export const authService = {
-  register: (payload) => api.post('/auth/register', payload),
+  register: (payload) => api.post('/auth/register/complete', payload),
+  startRegistrationOtp: (payload) => api.post('/auth/register/start', payload),
   registrationDepartments: (payload) => api.post('/auth/registration-departments', payload),
   requestPasswordReset: (email) => api.post('/auth/forgot-password', { email }),
   resetPassword: (payload) => api.post('/auth/reset-password', payload),
@@ -9,4 +10,5 @@ export const authService = {
   googleLogin: (credential) => api.post('/auth/google', { credential }),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
+  meStrict: () => strictAuthApi.get('/auth/me'),
 };

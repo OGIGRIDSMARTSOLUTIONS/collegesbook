@@ -114,6 +114,7 @@ async function listFeeds({ category, forceRefresh = false } = {}) {
 
   const categoryKeys = category ? [category] : Object.keys(CATEGORY_DEFINITIONS);
   const results = [];
+  const errors = [];
 
   for (const categoryKey of categoryKeys) {
     getCategory(categoryKey);
@@ -154,11 +155,25 @@ async function listFeeds({ category, forceRefresh = false } = {}) {
         });
         continue;
       }
-      throw error;
+      // One failing upstream category must not hide all the healthy categories.
+      // Report degraded availability without inventing article content.
+      console.warn(`[news-feeds] ${categoryKey}: ${error.message}`);
+      errors.push({ category: categoryKey, message: 'News source temporarily unavailable' });
+      results.push({
+        category: {
+          key: categoryKey,
+          label: CATEGORY_DEFINITIONS[categoryKey].label,
+          icon: CATEGORY_DEFINITIONS[categoryKey].icon,
+        },
+        articles: [],
+        unavailable: true,
+      });
     }
   }
 
   return {
+    partial: errors.length > 0,
+    unavailableCategories: errors.map((entry) => entry.category),
     provider: 'NewsData.io',
     updatedAt: new Date().toISOString(),
     cacheMinutes: config.cacheMinutes,
@@ -271,7 +286,19 @@ async function listNigeria({ forceRefresh = false } = {}) {
         }],
       };
     }
-    throw error;
+    console.warn(`[news-feeds] nigeria: ${error.message}`);
+    return {
+      provider: 'NewsData.io',
+      updatedAt: new Date().toISOString(),
+      cacheMinutes: config.cacheMinutes,
+      partial: true,
+      unavailableCategories: ['nigeria'],
+      categories: [{
+        category: { key: 'nigeria', label: 'Nigerian News', icon: '🇳🇬' },
+        articles: [],
+        unavailable: true,
+      }],
+    };
   }
 }
 

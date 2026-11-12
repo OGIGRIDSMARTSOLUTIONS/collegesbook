@@ -15,6 +15,22 @@ const registerSchema = z.object({
   path: ['department'],
 });
 
+const startRegistrationOtpSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  matriculationNumber: z.string().trim().min(1).max(80),
+  departmentId: z.string().min(1).max(60).optional(),
+  phoneNumber: z.string().min(7).max(25).optional(),
+}).refine((value) => Boolean(value.departmentId || value.phoneNumber), {
+  message: 'Provide a department or registry phone number',
+});
+
+const completeRegistrationOtpSchema = z.object({
+  challengeId: z.string().uuid(),
+  code: z.string().regex(/^\d{6}$/, 'Enter the six-digit email code'),
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(8),
+});
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
@@ -33,4 +49,4 @@ const resetPasswordSchema = z.object({
   token: z.string().min(32).max(200),
   password: z.string().min(8, 'Password must be at least 8 characters'),
 });
-module.exports = { registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema, forgotPasswordSchema, resetPasswordSchema };
+module.exports = { startRegistrationOtpSchema, completeRegistrationOtpSchema, registerSchema, loginSchema, googleLoginSchema, registrationDepartmentsSchema, forgotPasswordSchema, resetPasswordSchema };

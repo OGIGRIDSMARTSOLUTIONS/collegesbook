@@ -1,6 +1,32 @@
 import { api } from './api';
 
 const articleCache = new Map();
+
+// An article may appear in several provider categories with the same ID.
+// Deduplicate across the entire feed, not just within each category.
+export function uniqueNewsItems(items) {
+  const seenIds = new Set();
+  const seenUrls = new Set();
+  const seenTitles = new Set();
+
+  return items.filter((item) => {
+    const id = String(item?.id || '').trim();
+    const url = String(item?.url || '').trim();
+    const titleKey = `${String(item?.source || '').trim()}|${String(item?.title || '').trim()}`;
+
+    if ((id && seenIds.has(id)) ||
+        (url && seenUrls.has(url)) ||
+        (!id && !url && seenTitles.has(titleKey))) {
+      return false;
+    }
+
+    if (id) seenIds.add(id);
+    if (url) seenUrls.add(url);
+    if (!id && !url) seenTitles.add(titleKey);
+    return true;
+  });
+}
+
 const articleRequests = new Map();
 
 async function fetchArticle(url) {
@@ -55,7 +81,7 @@ export const newsFeedService = {
     return {
       ...data,
       categories,
-      items,
+      items: uniqueNewsItems(items),
     };
   },
 };

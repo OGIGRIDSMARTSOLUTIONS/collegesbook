@@ -1,0 +1,756 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                     String             @id @default(cuid())
+  email                  String?            @unique
+  phone                  String?            @unique
+  passwordHash           String
+  role                   Role               @default(STUDENT)
+  accountStatus          AccountStatus      @default(PENDING)
+  emailVerifiedAt        DateTime?
+  lastLoginAt            DateTime?
+  refreshTokenHash       String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  username               String?            @unique
+  passwordResetTokenHash String?            @unique
+  passwordResetExpiresAt DateTime?
+  auditLogs              AuditLog[]
+  institutionEvents      InstitutionEvent[] @relation("InstitutionEventCreator")
+  institutionStaff       InstitutionStaff?
+  student                Student?
+
+  @@index([role])
+  @@map("users")
+}
+
+model Institution {
+  id                     String                 @id @default(cuid())
+  code                   String                 @unique
+  institutionCode        String                 @unique
+  name                   String
+  shortName              String?
+  logoUrl                String?
+  coverImageUrl          String?
+  description            String?
+  colours                Json?
+  website                String?
+  location               String?
+  status                 InstitutionStatus      @default(ACTIVE)
+  crossInstitutionPolicy CrossInstitutionPolicy @default(CONNECTION_ONLY)
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+  academicSets           AcademicSet[]
+  auditLogs              AuditLog[]
+  broadcasts             Broadcast[]
+  departments            Department[]
+  faculties              Faculty[]
+  events                 InstitutionEvent[]
+  staff                  InstitutionStaff[]
+  students               Student[]
+  yearBooks              YearBook[]
+
+  @@map("institutions")
+}
+
+model InstitutionStaff {
+  id            String      @id @default(cuid())
+  userId        String      @unique
+  institutionId String
+  firstName     String
+  lastName      String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId])
+  @@map("institution_staff")
+}
+
+model Faculty {
+  id            String       @id @default(cuid())
+  code          String
+  name          String
+  institutionId String
+  createdAt     DateTime     @default(now())
+  departments   Department[]
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  students      Student[]
+
+  @@unique([institutionId, code])
+  @@index([institutionId])
+  @@map("faculties")
+}
+
+model Department {
+  id            String        @id @default(cuid())
+  code          String
+  name          String
+  institutionId String
+  facultyId     String
+  createdAt     DateTime      @default(now())
+  academicSets  AcademicSet[]
+  faculty       Faculty       @relation(fields: [facultyId], references: [id], onDelete: Cascade)
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  students      Student[]
+
+  @@unique([institutionId, code])
+  @@index([institutionId])
+  @@index([facultyId])
+  @@map("departments")
+}
+
+model AcademicSet {
+  id             String          @id @default(cuid())
+  code           String          @unique
+  name           String
+  institutionId  String
+  departmentId   String?
+  kind           AcademicSetKind @default(ADMISSION_COHORT)
+  startYear      Int
+  endYear        Int?
+  graduationYear Int?
+  status         SetStatus       @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  department     Department?     @relation(fields: [departmentId], references: [id])
+  institution    Institution     @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  students       Student[]
+  yearBooks      YearBook[]
+
+  @@index([institutionId])
+  @@index([departmentId])
+  @@map("academic_sets")
+}
+
+model Student {
+  id                  String                    @id @default(cuid())
+  code                String                    @unique
+  userId              String?                   @unique
+  institutionId       String
+  setId               String
+  departmentId        String?
+  facultyId           String?
+  studentNumber       String?
+  firstName           String
+  lastName            String
+  otherNames          String?
+  profilePhotoUrl     String?
+  coverPhotoUrl       String?
+  bio                 String?
+  gender              String?
+  location            String?
+  verificationStatus  VerificationStatus        @default(PENDING)
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  phoneNumber         String?
+  dateOfBirth         DateTime?
+  registryApproved    Boolean                   @default(true)
+  broadcastReceipts   BroadcastRecipient[]
+  comments            Comment[]
+  connectionsReceived Connection[]              @relation("ConnectionAddressee")
+  connectionsSent     Connection[]              @relation("ConnectionRequester")
+  conversations       ConversationParticipant[]
+  groupMemberships    GroupMembership[]
+  groupsCreated       Group[]                   @relation("GroupCreator")
+  mentionsReceived    MessageMention[]          @relation("MentionedStudent")
+  messages            Message[]
+  notifications       Notification[]
+  reposts             PostRepost[]
+  posts               Post[]
+  reactions           Reaction[]
+  reportsFiled        Report[]                  @relation("ReporterStudent")
+  savedPosts          SavedPost[]
+  accessEvents        StudentAccessEvent[]
+  privacy             StudentPrivacy?
+  department          Department?               @relation(fields: [departmentId], references: [id])
+  faculty             Faculty?                  @relation(fields: [facultyId], references: [id])
+  institution         Institution               @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  academicSet         AcademicSet               @relation(fields: [setId], references: [id])
+  user                User?                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  yearBookEntries     YearBookStudent[]
+
+  @@unique([institutionId, studentNumber])
+  @@index([institutionId])
+  @@index([setId])
+  @@index([departmentId])
+  @@map("students")
+}
+
+model StudentPrivacy {
+  id                String         @id @default(cuid())
+  studentId         String         @unique
+  whoCanMessage     MessagePrivacy @default(INSTITUTION_ONLY)
+  whoCanViewProfile ProfilePrivacy @default(EVERYONE)
+  whoCanViewPosts   ProfilePrivacy @default(INSTITUTION_ONLY)
+  showBirthday      Boolean        @default(true)
+  student           Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("student_privacy")
+}
+
+model Post {
+  id             String         @id @default(cuid())
+  authorId       String
+  institutionId  String
+  body           String?
+  images         Json?
+  linkUrl        String?
+  visibility     PostVisibility @default(INSTITUTION)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  deletedAt      DateTime?
+  groupId        String?
+  repostOfId     String?
+  comments       Comment[]
+  reposts        PostRepost[]
+  author         Student        @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  group          Group?         @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  repostOf       Post?          @relation("PostRepostOrigin", fields: [repostOfId], references: [id])
+  repostedCopies Post[]         @relation("PostRepostOrigin")
+  reactions      Reaction[]
+  reports        Report[]
+  savedBy        SavedPost[]
+
+  @@index([authorId])
+  @@index([institutionId, createdAt])
+  @@index([groupId])
+  @@index([authorId, createdAt])
+  @@index([repostOfId])
+  @@map("posts")
+}
+
+model PostRepost {
+  id           String   @id @default(cuid())
+  postId       String
+  studentId    String
+  quote        String?  @db.VarChar(1000)
+  repostPostId String?  @unique
+  createdAt    DateTime @default(now())
+  post         Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  student      Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, studentId])
+  @@index([studentId, createdAt])
+  @@map("post_reposts")
+}
+
+model Comment {
+  id              String     @id @default(cuid())
+  postId          String
+  authorId        String
+  parentCommentId String?
+  body            String
+  createdAt       DateTime   @default(now())
+  deletedAt       DateTime?
+  author          Student    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent          Comment?   @relation("CommentReplies", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies         Comment[]  @relation("CommentReplies")
+  post            Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reactions       Reaction[]
+  reports         Report[]
+
+  @@index([postId])
+  @@index([parentCommentId])
+  @@index([postId, createdAt])
+  @@map("comments")
+}
+
+model Reaction {
+  id        String       @id @default(cuid())
+  studentId String
+  postId    String?
+  commentId String?
+  type      ReactionType @default(LIKE)
+  createdAt DateTime     @default(now())
+  comment   Comment?     @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  post      Post?        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  student   Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, studentId])
+  @@unique([commentId, studentId])
+  @@map("reactions")
+}
+
+model Connection {
+  id          String           @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status      ConnectionStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  addressee   Student          @relation("ConnectionAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+  requester   Student          @relation("ConnectionRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId])
+  @@map("connections")
+}
+
+model Report {
+  id         String           @id @default(cuid())
+  reporterId String
+  targetType ReportTargetType
+  postId     String?
+  commentId  String?
+  reason     String
+  status     ReportStatus     @default(PENDING)
+  createdAt  DateTime         @default(now())
+  comment    Comment?         @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  post       Post?            @relation(fields: [postId], references: [id], onDelete: Cascade)
+  reporter   Student          @relation("ReporterStudent", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("reports")
+}
+
+model Conversation {
+  id           String                    @id @default(cuid())
+  type         ConversationType          @default(PRIVATE)
+  createdAt    DateTime                  @default(now())
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String       @id @default(cuid())
+  conversationId String
+  studentId      String
+  joinedAt       DateTime     @default(now())
+  lastReadAt     DateTime?
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, studentId])
+  @@index([studentId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String           @id @default(cuid())
+  conversationId String
+  senderId       String
+  body           String?
+  attachmentUrl  String?
+  createdAt      DateTime         @default(now())
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  mentions       MessageMention[]
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Student          @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+model MessageMention {
+  id          String   @id @default(cuid())
+  messageId   String
+  studentId   String
+  startOffset Int
+  endOffset   Int
+  createdAt   DateTime @default(now())
+  message     Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  student     Student  @relation("MentionedStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, studentId, startOffset])
+  @@index([studentId, createdAt])
+  @@map("message_mentions")
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  recipientId String
+  type        NotificationType
+  payload     Json?
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  recipient   Student          @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, readAt])
+  @@index([recipientId, createdAt])
+  @@map("notifications")
+}
+
+model Broadcast {
+  id            String               @id @default(cuid())
+  institutionId String
+  authorUserId  String
+  title         String
+  body          String
+  scope         BroadcastScope       @default(ALL)
+  scopeIds      Json?
+  createdAt     DateTime             @default(now())
+  recipients    BroadcastRecipient[]
+  institution   Institution          @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId])
+  @@map("broadcasts")
+}
+
+model BroadcastRecipient {
+  id          String    @id @default(cuid())
+  broadcastId String
+  studentId   String
+  readAt      DateTime?
+  broadcast   Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+  student     Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([broadcastId, studentId])
+  @@map("broadcast_recipients")
+}
+
+model InstitutionEvent {
+  id              String      @id @default(cuid())
+  institutionId   String
+  createdByUserId String
+  title           String
+  description     String?
+  eventDate       DateTime
+  endDate         DateTime?
+  location        String?
+  category        String      @default("GENERAL")
+  isPublished     Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  createdBy       User        @relation("InstitutionEventCreator", fields: [createdByUserId], references: [id])
+  institution     Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId, eventDate])
+  @@index([institutionId, isPublished])
+  @@map("institution_events")
+}
+
+model YearBook {
+  id             String            @id @default(cuid())
+  institutionId  String
+  setId          String?
+  year           String
+  status         YearBookStatus    @default(DRAFT)
+  coverImageUrl  String?
+  welcomeMessage String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  photos         YearBookPhoto[]
+  sections       YearBookSection[]
+  students       YearBookStudent[]
+  institution    Institution       @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  academicSet    AcademicSet?      @relation(fields: [setId], references: [id])
+
+  @@unique([institutionId, year, setId])
+  @@index([institutionId])
+  @@map("year_books")
+}
+
+model YearBookSection {
+  id         String              @id @default(cuid())
+  yearBookId String
+  kind       YearBookSectionKind
+  title      String
+  order      Int                 @default(0)
+  contents   YearBookContent[]
+  photos     YearBookPhoto[]
+  yearBook   YearBook            @relation(fields: [yearBookId], references: [id], onDelete: Cascade)
+
+  @@index([yearBookId])
+  @@map("year_book_sections")
+}
+
+model YearBookStudent {
+  id            String   @id @default(cuid())
+  yearBookId    String
+  institutionId String
+  studentId     String
+  photoUrl      String?
+  quote         String?
+  student       Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  yearBook      YearBook @relation(fields: [yearBookId], references: [id], onDelete: Cascade)
+
+  @@unique([yearBookId, studentId])
+  @@index([institutionId])
+  @@map("year_book_students")
+}
+
+model YearBookPhoto {
+  id               String           @id @default(cuid())
+  yearBookId       String
+  sectionId        String?
+  url              String
+  caption          String?
+  uploadedByUserId String
+  createdAt        DateTime         @default(now())
+  section          YearBookSection? @relation(fields: [sectionId], references: [id])
+  yearBook         YearBook         @relation(fields: [yearBookId], references: [id], onDelete: Cascade)
+
+  @@index([yearBookId])
+  @@map("year_book_photos")
+}
+
+model YearBookContent {
+  id         String          @id @default(cuid())
+  yearBookId String
+  sectionId  String
+  body       String
+  section    YearBookSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([sectionId])
+  @@map("year_book_contents")
+}
+
+model Group {
+  id            String            @id @default(cuid())
+  name          String
+  description   String?
+  kind          GroupKind         @default(PUBLIC)
+  institutionId String?
+  creatorId     String
+  createdAt     DateTime          @default(now())
+  invitations   GroupInvitation[]
+  memberships   GroupMembership[]
+  creator       Student           @relation("GroupCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  posts         Post[]
+
+  @@index([institutionId])
+  @@map("groups")
+}
+
+model GroupMembership {
+  id        String          @id @default(cuid())
+  groupId   String
+  studentId String
+  role      GroupMemberRole @default(MEMBER)
+  joinedAt  DateTime        @default(now())
+  group     Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  student   Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, studentId])
+  @@index([studentId])
+  @@map("group_memberships")
+}
+
+model GroupInvitation {
+  id          String    @id @default(cuid())
+  groupId     String
+  inviterId   String
+  inviteeId   String
+  status      String    @default("PENDING")
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  respondedAt DateTime?
+  group       Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, inviteeId])
+  @@index([inviteeId, status])
+  @@map("group_invitations")
+}
+
+model SavedPost {
+  id        String   @id @default(cuid())
+  studentId String
+  postId    String
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, postId])
+  @@map("saved_posts")
+}
+
+model AuditLog {
+  id            String       @id @default(cuid())
+  institutionId String?
+  actorUserId   String
+  action        String
+  targetType    String
+  targetId      String
+  metadata      Json?
+  ip            String?
+  createdAt     DateTime     @default(now())
+  actor         User         @relation(fields: [actorUserId], references: [id], onDelete: Cascade)
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+
+  @@index([institutionId])
+  @@index([actorUserId])
+  @@map("audit_logs")
+}
+
+model StudentAccessEvent {
+  id            String   @id @default(cuid())
+  institutionId String
+  studentId     String
+  actorUserId   String?
+  action        String
+  reason        String
+  createdAt     DateTime @default(now())
+  student       Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId, createdAt])
+  @@map("student_access_events")
+}
+
+enum Role {
+  SUPER_ADMIN
+  INSTITUTION_ADMIN
+  INSTITUTION_MODERATOR
+  YEARBOOK_ADMIN
+  STUDENT
+  ALUMNI
+}
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum InstitutionStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum CrossInstitutionPolicy {
+  OFF
+  CONNECTION_ONLY
+  MESSAGE_AFTER_CONNECTION
+  MESSAGE_WITHOUT_CONNECTION
+  FULL_INTERACTION
+}
+
+enum AcademicSetKind {
+  ADMISSION_COHORT
+  GRADUATION_COHORT
+  CLASS
+  DEPARTMENTAL
+  FACULTY
+  SCHOOL
+  PROFESSIONAL
+}
+
+enum SetStatus {
+  ACTIVE
+  GRADUATED
+  ARCHIVED
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  SUSPENDED
+  GRADUATED
+  ALUMNI
+}
+
+enum MessagePrivacy {
+  NOBODY_EXCEPT_CONNECTIONS
+  SET_ONLY
+  INSTITUTION_ONLY
+  APPROVED_INSTITUTIONS
+  EVERYONE
+}
+
+enum ProfilePrivacy {
+  CONNECTIONS_ONLY
+  SET_ONLY
+  INSTITUTION_ONLY
+  EVERYONE
+}
+
+enum PostVisibility {
+  PUBLIC
+  INSTITUTION
+  SET
+  CONNECTIONS
+}
+
+enum ReactionType {
+  LIKE
+  LOVE
+  CELEBRATE
+  SUPPORT
+}
+
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  BLOCKED
+}
+
+enum ConversationType {
+  PRIVATE
+  SET
+  INSTITUTION
+  CROSS_INSTITUTION
+  GROUP
+}
+
+enum NotificationType {
+  MESSAGE
+  CONNECTION
+  COMMENT
+  LIKE
+  MENTION
+  SHARE
+  INSTITUTION_BROADCAST
+  YEARBOOK
+  SYSTEM
+}
+
+enum BroadcastScope {
+  ALL
+  SET
+  DEPARTMENT
+  FACULTY
+  CUSTOM
+}
+
+enum YearBookStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum YearBookSectionKind {
+  FACULTY
+  DEPARTMENT
+  EVENTS
+  ACHIEVEMENTS
+  MEMORIES
+}
+
+enum ReportTargetType {
+  POST
+  COMMENT
+  PROFILE
+  MESSAGE
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  ACTIONED
+  DISMISSED
+}
+
+enum GroupKind {
+  PUBLIC
+  PRIVATE
+}
+
+enum GroupMemberRole {
+  MEMBER
+  MODERATOR
+  ADMIN
+}
+
+

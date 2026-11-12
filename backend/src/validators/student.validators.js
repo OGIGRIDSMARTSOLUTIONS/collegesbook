@@ -29,7 +29,6 @@ const updateOwnProfileSchema = z.object({
   bio: z.union([z.string().max(500), z.null()]).optional(),
   location: z.union([z.string().max(120), z.null()]).optional(),
   gender: z.union([z.string().max(30), z.null()]).optional(),
-  phoneNumber: optionalPhoneNumber,
   dateOfBirth: optionalDateOfBirth,
   profilePhotoUrl: z.union([z.string().url(), z.literal(''), z.null()]).optional(),
   coverPhotoUrl: z.union([z.string().url(), z.literal(''), z.null()]).optional(),
@@ -59,6 +58,7 @@ const adminCreateStudentSchema = z.object({
   matriculationNumber: z.string().min(1).max(80),
   departmentId: z.string().min(1),
   phoneNumber: z.string().trim().regex(/^\d{7,11}$/, 'Phone number must contain 7 to 11 digits'),
+  registryEmail: z.string().trim().toLowerCase().email(),
   setId: z.string().min(1).optional(), // class to add to; newest class if omitted
 });
 
@@ -73,7 +73,7 @@ const adminUpdateStudentSchema = z.object({
   departmentId: z.string().optional(),
   facultyId: z.string().optional(),
   studentNumber: z.string().min(1).max(80).optional(),
-  phoneNumber: optionalPhoneNumber,
+  registryEmail: z.string().trim().toLowerCase().email().optional(),
   firstName: z.string().min(1).max(80).optional(),
   lastName: z.string().min(1).max(80).optional(),
   dateOfBirth: optionalDateOfBirth,

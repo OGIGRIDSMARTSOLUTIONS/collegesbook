@@ -5,8 +5,8 @@ export function useConnections() {
   return useQuery({ queryKey: ['connections'], queryFn: connectionService.list });
 }
 
-export function usePendingConnections() {
-  return useQuery({ queryKey: ['connections', 'pending'], queryFn: connectionService.listPending });
+export function usePendingConnections(enabled = true) {
+  return useQuery({ queryKey: ['connections', 'pending'], queryFn: connectionService.listPending, enabled });
 }
 
 export function useBlockedConnections() {

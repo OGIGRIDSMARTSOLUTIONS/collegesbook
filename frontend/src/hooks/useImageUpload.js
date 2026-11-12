@@ -4,10 +4,10 @@ import { uploadService } from '../services/upload.service';
 /**
  * useImageUpload — the file goes to OUR OWN backend (via the same `api`
  * axios instance everything else uses, cookies included), which resizes
- * and compresses it with sharp before storing it in Supabase Storage —
+ * and compresses it with sharp before storing it in Cloudinary —
  * see backend/src/services/upload.service.js. This is a deliberate
  * architecture choice: the bytes pass through our server (unlike the
- * earlier direct-to-Cloudinary approach) specifically so sharp can touch
+ * direct-to-Cloudinary approach) specifically so sharp can touch
  * them before they're stored.
  */
 export function useImageUpload(purpose) {

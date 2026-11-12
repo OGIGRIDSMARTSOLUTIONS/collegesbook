@@ -2,12 +2,16 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { TextField } from '../../components/TextField';
-import { useAdminStudentSearch, useAdminCreateStudent, useAdminUpdateStudent, useAdminBulkAnalyze, useAdminBulkImport, useAdminSetAccountStatus, useUpdateRegistryApproval } from '../../hooks/useAdminStudents';
+import { useAdminStudentSearch, useAdminCreateStudent, useAdminUpdateStudent, useAdminBulkAnalyze, useAdminBulkImport, useAdminSetAccountStatus, useUpdateRegistryApproval, useRecoverRegistrationPhone } from '../../hooks/useAdminStudents';
 import { useDepartments, useAcademicSets } from '../../hooks/useInstitutionAdmin';
 import { LoadingState } from '../../components/loading/Spinner';
 
 function StudentRow({ student }) {
   const updateStudent = useAdminUpdateStudent();
+  const recoverPhone = useRecoverRegistrationPhone();
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryPhone, setRecoveryPhone] = useState(student.phoneNumber ?? '');
+  const [recoveryReason, setRecoveryReason] = useState('');
   const updateApproval = useUpdateRegistryApproval();
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalReason, setApprovalReason] = useState('');
@@ -20,12 +24,16 @@ function StudentRow({ student }) {
     lastName: student.lastName ?? '',
     studentNumber: student.studentNumber ?? '',
     phoneNumber: student.phoneNumber ?? '',
+    registryEmail: student.registryEmail ?? '',
     departmentId: student.department?.id ?? '',
   });
   const departmentsQuery = useDepartments();
 
   function save() {
-    updateStudent.mutate(form, { onSuccess: () => setEditing(false) });
+    const { phoneNumber, ...payload } = form;
+    updateStudent.mutate({ id: student.id, payload }, {
+      onSuccess: () => setEditing(false),
+    });
   }
 
   return (
@@ -36,6 +44,16 @@ function StudentRow({ student }) {
 <input value={form.lastName} onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))} className="w-28 rounded-md border border-border bg-surface px-2 py-1 text-sm" />
 </div>) : <p className="font-medium text-text">{student.firstName} {student.lastName}</p>}
         <p className="text-xs text-text-secondary">{student.email || 'Account not yet created'}</p>
+        <p className="text-xs text-text-secondary">Registry email: {student.registryEmail || 'Not supplied'}</p>
+        {editing && !student.email && (
+          <input
+            type="email"
+            aria-label="Registry email"
+            value={form.registryEmail}
+            onChange={(event) => setForm((current) => ({ ...current, registryEmail: event.target.value }))}
+            className="mt-2 w-full rounded-md border border-border bg-surface px-2 py-1 text-sm"
+          />
+        )}
       </td>
       <td className="py-3 pr-4 text-text-secondary">
         {editing ? (
@@ -43,9 +61,7 @@ function StudentRow({ student }) {
         ) : student.studentNumber || '—'}
       </td>
       <td className="py-3 pr-4 text-text-secondary">
-        {editing ? (
-          <input inputMode="numeric" maxLength={11} value={form.phoneNumber} onChange={(e) => setForm((f) => ({ ...f, phoneNumber: e.target.value.replace(/\D/g, '').slice(0, 11) }))} className="w-32 rounded-md border border-border bg-surface px-2 py-1 text-sm" />
-        ) : student.phoneNumber || '—'}
+        {student.phoneNumber || '—'}
       </td>
       <td className="py-3 pr-4 text-text-secondary">
         {editing ? (
@@ -118,6 +134,32 @@ function StudentRow({ student }) {
             {updateApproval.isError && <p className="text-xs text-danger">{updateApproval.error.message}</p>}
           </div>
         )}
+        {recoveryOpen && (
+          <div className="mb-3 min-w-60 space-y-2 rounded-lg border border-border p-3">
+            <p className="text-xs font-semibold">Institution-controlled phone recovery</p>
+            <p className="text-xs text-text-secondary">
+              Confirm the student's identity through your institution's official records.
+              Changing the phone invalidates outstanding registration codes.
+            </p>
+            <TextField label="Correct registered phone (11 digits)" type="tel"
+              inputMode="numeric" maxLength={11} value={recoveryPhone}
+              onChange={(event) => setRecoveryPhone(event.target.value.replace(/\D/g, '').slice(0, 11))} />
+            <textarea aria-label="Reason and verification method" value={recoveryReason}
+              onChange={(event) => setRecoveryReason(event.target.value)} maxLength={500}
+              placeholder="Reason and how the student's identity was verified"
+              className="w-full rounded-md border border-border bg-surface p-2 text-xs" />
+            <div className="flex gap-2">
+              <Button type="button" disabled={recoverPhone.isPending || recoveryPhone.length !== 11 || recoveryReason.trim().length < 10}
+                onClick={() => recoverPhone.mutate({ id: student.id,
+                  payload: { phoneNumber: recoveryPhone, reason: recoveryReason.trim() } },
+                  { onSuccess: () => { setRecoveryOpen(false); setRecoveryReason(''); } })}>
+                Save verified phone
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => setRecoveryOpen(false)}>Cancel</Button>
+            </div>
+            {recoverPhone.isError && <p className="text-xs text-danger">{recoverPhone.error.message}</p>}
+          </div>
+        )}
         {editing ? (
           <div className="flex gap-2">
             <Button type="button" onClick={save} disabled={updateStudent.isPending}>Save</Button>
@@ -126,6 +168,11 @@ function StudentRow({ student }) {
         ) : (
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="secondary" onClick={() => setEditing(true)}>Edit</Button>
+            {!student.accountStatus && (
+              <Button type="button" variant="secondary" onClick={() => setRecoveryOpen(true)}>
+                Recover phone
+              </Button>
+            )}
             <Button type="button" variant="secondary" onClick={() => setApprovalOpen(true)}>
               {student.registryApproved === false ? 'Restore approval' : 'CollegeBook access'}
             </Button>
@@ -171,9 +218,9 @@ function BulkStudentUpload() {
     const departments = departmentsQuery.data ?? [];
     const department = departments[0]?.name || '';
     const rows = [
-      ['First Name', 'Last Name', 'Other Names', 'Matriculation Number', 'Phone Number', 'Department'],
-      ['John', 'Adebayo', '', 'REPLACE001', '08000000001', department],
-      ['Jane', 'Okafor', 'Chiamaka', 'REPLACE002', '08000000002', department],
+      ['First Name', 'Last Name', 'Other Names', 'Matriculation Number', 'Phone Number', 'Department', 'Email'],
+      ['John', 'Adebayo', '', 'REPLACE001', '08000000001', department, 'john@example.com'],
+      ['Jane', 'Okafor', 'Chiamaka', 'REPLACE002', '08000000002', department, 'jane@example.com'],
     ];
     const csv = rows.map((row) => row.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -212,7 +259,7 @@ function BulkStudentUpload() {
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-3">
         <div className="rounded-xl bg-bg p-4 text-sm text-text-secondary">
-<strong className="text-text">Required:</strong> First Name, Last Name, Matriculation Number, Phone Number, Department.</div>
+<strong className="text-text">Required:</strong> First Name, Last Name, Matriculation Number, Phone Number, Department, Email.</div>
         <div className="rounded-xl bg-bg p-4 text-sm text-text-secondary">
 <strong className="text-text">Automatic:</strong> Academic class, faculty and internal student code are assigned by CollegeBook.</div>
         <div className="rounded-xl bg-bg p-4 text-sm text-text-secondary">
@@ -255,6 +302,7 @@ function BulkStudentUpload() {
 <th className="p-3">Student</th>
 <th className="p-3">Matriculation</th>
 <th className="p-3">Phone</th>
+<th className="p-3">Email</th>
 <th className="p-3">Department</th>
 <th className="p-3">Result</th>
 </tr>
@@ -264,6 +312,7 @@ function BulkStudentUpload() {
 <td className="p-3 font-medium text-text">{row.firstName} {row.lastName}</td>
 <td className="p-3 text-text-secondary">{row.matriculationNumber || '—'}</td>
 <td className="p-3 text-text-secondary">{row.phoneNumber || '—'}</td>
+<td className="p-3 text-text-secondary">{row.registryEmail || '—'}</td>
 <td className="p-3 text-text-secondary">{row.department || '—'}</td>
 <td className="p-3">{row.valid ? <span className="font-semibold text-success">Ready</span> : <span className="text-danger">{row.errors.join(' • ')}</span>}</td>
 </tr>)}</tbody>
@@ -283,13 +332,13 @@ function AddStudentForm({ onCreated }) {
   const departmentsQuery = useDepartments();
   const setsQuery = useAcademicSets();
   const currentSet = [...(setsQuery.data ?? [])].sort((a, b) => Number(b.startYear ?? 0) - Number(a.startYear ?? 0))[0];
-  const [form, setForm] = useState({ name: '', matriculationNumber: '', departmentId: '', phoneNumber: '' });
+  const [form, setForm] = useState({ name: '', matriculationNumber: '', departmentId: '', phoneNumber: '', registryEmail: '' });
 
   function submit(e) {
     e.preventDefault();
     createStudent.mutate(form, {
       onSuccess: () => {
-        setForm({ name: '', matriculationNumber: '', departmentId: '', phoneNumber: '' });
+        setForm({ name: '', matriculationNumber: '', departmentId: '', phoneNumber: '', registryEmail: '' });
         onCreated?.();
       },
     });
@@ -321,6 +370,14 @@ function AddStudentForm({ onCreated }) {
         <TextField label="Student name" placeholder="Full name" required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
         <TextField label="Matriculation number" placeholder="e.g. PHA/2026/001" required value={form.matriculationNumber} onChange={(e) => setForm((f) => ({ ...f, matriculationNumber: e.target.value }))} />
         <TextField label="Phone number" placeholder="11 digits maximum" required maxLength={11} inputMode="numeric" value={form.phoneNumber} onChange={(e) => setForm((f) => ({ ...f, phoneNumber: e.target.value.replace(/\D/g, '').slice(0, 11) }))} />
+        <TextField
+          label="Student email address"
+          type="email"
+          required
+          placeholder="student@example.com"
+          value={form.registryEmail}
+          onChange={(event) => setForm((current) => ({ ...current, registryEmail: event.target.value }))}
+        />
         <label className="block text-sm text-text">
           <span className="mb-1 block text-xs font-medium text-text-secondary">Department</span>
           <select required value={form.departmentId} onChange={(e) => setForm((f) => ({ ...f, departmentId: e.target.value }))} className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm" disabled={!currentSet}>

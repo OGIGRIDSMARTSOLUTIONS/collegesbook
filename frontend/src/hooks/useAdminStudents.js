@@ -59,3 +59,11 @@ export function useUpdateRegistryApproval() {
     onSuccess: () => client.invalidateQueries({ queryKey: ['admin', 'students'] }),
   });
 }
+
+export function useRecoverRegistrationPhone() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }) => studentService.recoverRegistrationPhone(id, payload),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['admin', 'students'] }),
+  });
+}

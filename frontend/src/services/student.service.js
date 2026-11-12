@@ -10,6 +10,7 @@ export const studentService = {
   updateRegistryApproval: (id, payload) => api.patch(`/students/${id}/registry-approval`, payload),
   adminSetAccountStatus: (id, payload) => api.patch(`/students/${id}/account-status`, payload),
   adminUpdate: (id, payload) => api.patch(`/students/${id}`, payload),
+  recoverRegistrationPhone: (id, payload) => api.patch(`/students/${id}/registration-phone`, payload),
   adminBulkAnalyze: (csv) => api.post('/students/admin/bulk-analyze', { csv }),
   adminBulkImport: (csv) => api.post('/students/admin/bulk-import', { csv }),
 };

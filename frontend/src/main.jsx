@@ -6,6 +6,9 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 import './index.css';
 import { ThemeProvider } from './theme/ThemeContext';
 import App from './App.jsx';
+import { RoutePreloader } from './components/RoutePreloader';
+import { ToastViewport } from './components/ToastViewport';
+import { startOfflinePersistence } from './lib/offlineCache';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,6 +24,8 @@ const queryClient = new QueryClient({
   },
 });
 
+startOfflinePersistence(queryClient);
+
 // Google Sign-In is optional, same pattern as Redis on the backend: if
 // VITE_GOOGLE_CLIENT_ID isn't set, we simply don't wrap the app in
 // GoogleOAuthProvider at all, and the LoginPage's Google button doesn't
@@ -32,7 +37,9 @@ const tree = (
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <ThemeProvider>
+<RoutePreloader />
 <App />
+<ToastViewport />
 </ThemeProvider>
     </BrowserRouter>
   </QueryClientProvider>

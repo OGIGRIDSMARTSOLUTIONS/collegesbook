@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNewsFeeds } from '../../hooks/useNewsFeeds';
-import { newsFeedService } from '../../services/newsFeed.service';
+import { newsFeedService, uniqueNewsItems } from '../../services/newsFeed.service';
 
 const CATEGORIES = [
   { id: 'all', label: 'All', icon: '✦' },
@@ -61,7 +61,7 @@ export default function NewsFeedsPage() {
       return [item.title, item.description, item.source, item.category]
         .filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
     });
-    return filtered;
+    return uniqueNewsItems(filtered);
   }, [data?.items, category, query]);
 
   const currentStory = items.length ? items[activeIndex % items.length] : null;
@@ -115,7 +115,7 @@ export default function NewsFeedsPage() {
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{CATEGORIES.map((item) => <button key={item.id} type="button" onClick={() => setCategory(item.id)} className={`shrink-0 rounded-full px-3.5 py-2 text-xs font-semibold transition ${category === item.id ? 'bg-brand text-white shadow-sm' : 'border border-border bg-surface text-text-secondary hover:bg-bg hover:text-text'}`}>
 <span className="mr-1.5">{item.icon}</span>{item.label}</button>)}</div>
         </div>
-        {isError && <div className="mx-5 mt-5 rounded-2xl border border-warning/30 bg-warning/5 px-4 py-3 text-xs leading-5 text-text-secondary sm:mx-7">The live feed service could not be reached right now. CollegeBook will retry automatically.</div>}
+        {(isError || data?.partial) && <div className="mx-5 mt-5 rounded-2xl border border-warning/30 bg-warning/5 px-4 py-3 text-xs leading-5 text-text-secondary sm:mx-7">Some live news sources are temporarily unavailable. Available stories will remain visible and CollegeBook will retry later.</div>}
         {isLoading ? <LoadingState /> : items.length ? (
           <div className="p-5 sm:p-7">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

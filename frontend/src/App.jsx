@@ -1,16 +1,16 @@
 import { lazy, Suspense } from 'react';
+import LoginPage from './features/auth/LoginPage';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { LoadingState } from './components/loading/Spinner';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { AdminRoute } from './routes/AdminRoute';
 import { SuperAdminRoute } from './routes/SuperAdminRoute';
-import { MainLayout } from './layouts/MainLayout';
-import { AdminLayout } from './layouts/AdminLayout';
-import { SuperAdminLayout } from './layouts/SuperAdminLayout';
+const MainLayout = lazy(() => import('./layouts/MainLayout').then((module) => ({ default: module.MainLayout })));
+const AdminLayout = lazy(() => import('./layouts/AdminLayout').then((module) => ({ default: module.AdminLayout })));
+const SuperAdminLayout = lazy(() => import('./layouts/SuperAdminLayout').then((module) => ({ default: module.SuperAdminLayout })));
 import { RoleGate } from './components/RoleGate';
 import { ADMIN_SECTION_ROLES } from './constants/adminRoles';
 
-const LoginPage = lazy(() => import('./features/auth/LoginPage'));
 const ForgotPasswordPage = lazy(() => import('./features/auth/ForgotPasswordPage'));
 const ResetPasswordPage = lazy(() => import('./features/auth/ResetPasswordPage'));
 const RegisterPage = lazy(() => import('./features/auth/RegisterPage'));
@@ -40,6 +40,7 @@ export default function App() {
   return (
     <Suspense fallback={<LoadingState message="Loading CollegeBook…" />}>
     <Routes>
+      <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -47,7 +48,6 @@ export default function App() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<MainLayout />}>
-          <Route path="/" element={<NewsFeedsPage />} />
           <Route path="/home" element={<FeedPage />} />
           <Route path="/network" element={<NetworkPage />} />
           <Route path="/messages" element={<MessagesPage />} />
@@ -119,7 +119,8 @@ export default function App() {
 
         <Route element={<SuperAdminRoute />}>
           <Route element={<SuperAdminLayout />}>
-            <Route path="/super-admin" element={<SuperAdminDashboardPage />} />
+            <Route path="/superadmin" element={<SuperAdminDashboardPage />} />
+            <Route path="/super-admin" element={<Navigate to="/superadmin" replace />} />
           </Route>
         </Route>
       </Route>

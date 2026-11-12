@@ -330,6 +330,7 @@ model Student {
   lastName           String
   otherNames         String?
   phoneNumber        String?
+  registryEmail      String?            @unique
   profilePhotoUrl    String?
   coverPhotoUrl      String?
   bio                String?
@@ -337,6 +338,7 @@ model Student {
   location           String?
   dateOfBirth        DateTime?
   registryApproved   Boolean             @default(true)
+  registrationOtps   RegistrationOtp[]
   accessEvents       StudentAccessEvent[]
   verificationStatus VerificationStatus  @default(PENDING)
   createdAt          DateTime            @default(now())
@@ -836,4 +838,20 @@ model StudentAccessEvent {
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   @@index([institutionId, createdAt])
   @@map("student_access_events")
+}
+
+// One-time email challenges. Codes are HMAC digests; registry email changes invalidate them.
+model RegistrationOtp {
+  id          String   @id
+  studentId   String
+  emailDigest String
+  codeDigest  String
+  attempts    Int      @default(0)
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, createdAt])
+  @@index([expiresAt])
 }
