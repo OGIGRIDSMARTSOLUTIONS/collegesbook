@@ -16,6 +16,7 @@ const registerSchema = z.object({
 });
 
 const startRegistrationOtpSchema = z.object({
+  recaptchaToken: z.string().min(20).max(4096),
   email: z.string().trim().toLowerCase().email(),
   matriculationNumber: z.string().trim().min(1).max(80),
   departmentId: z.string().min(1).max(60).optional(),

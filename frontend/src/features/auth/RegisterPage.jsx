@@ -5,6 +5,7 @@ import { AuthLayout } from '../../layouts/AuthLayout';
 import { TextField } from '../../components/TextField';
 import { Button } from '../../components/Button';
 import { useAuth } from '../../hooks/useAuth';
+import { RecaptchaCheckbox } from '../../components/RecaptchaCheckbox';
 
 const initialForm = {
   matriculationNumber: '',
@@ -23,6 +24,8 @@ export default function RegisterPage() {
   const [challenge, setChallenge] = useState(null);
   const [otp, setOtp] = useState('');
   const [sendingOtp, setSendingOtp] = useState(false);
+  const [recaptchaToken, setRecaptchaToken] = useState('');
+  const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
   const [departments, setDepartments] = useState([]);
   const [loadingDepartments, setLoadingDepartments] = useState(false);
   const [departmentError, setDepartmentError] = useState('');
@@ -85,6 +88,11 @@ export default function RegisterPage() {
       return;
     }
 
+    if (!challenge && !recaptchaToken) {
+      setError('Complete the Google reCAPTCHA verification before requesting a code.');
+      return;
+    }
+
     try {
       if (!challenge) {
         setSendingOtp(true);
@@ -93,6 +101,7 @@ export default function RegisterPage() {
           departmentId: form.departmentId || undefined,
           phoneNumber: form.phoneNumber.trim() || undefined,
           email: form.email.trim(),
+          recaptchaToken,
         });
         setChallenge(response);
       } else {
@@ -107,6 +116,10 @@ export default function RegisterPage() {
     } catch (err) {
       setError(err.message || 'Unable to verify your registration');
     } finally {
+      if (!challenge) {
+        setRecaptchaToken('');
+        setCaptchaResetSignal((value) => value + 1);
+      }
       setSendingOtp(false);
     }
   }
@@ -220,9 +233,16 @@ export default function RegisterPage() {
           onChange={update('password')}
         />
 
+        {!challenge && (
+          <RecaptchaCheckbox
+            onVerify={setRecaptchaToken}
+            resetSignal={captchaResetSignal}
+          />
+        )}
+
         {error && <div className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{error}</div>}
 
-        <Button type="submit" className="w-full" disabled={isRegistering || sendingOtp || (Boolean(challenge) && otp.length !== 6)}>
+        <Button type="submit" className="w-full" disabled={isRegistering || sendingOtp || (!challenge && !recaptchaToken) || (Boolean(challenge) && otp.length !== 6)}>
           {isRegistering || sendingOtp ? 'Processing…' : challenge ? 'Verify code and create account' : 'Send email verification code'}
         </Button>
       </form>
